@@ -9,11 +9,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/LingByte/Ling/pkg/utils"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestNewOpenaiHandler(t *testing.T) {
-	apiKey := os.Getenv("OPENAI_API_KEY")
+	apiKey := utils.GetEnv("OPENAI_API_KEY")
 	baseURL := os.Getenv("OPENAI_BASE_URL")
 	model := os.Getenv("OPENAI_MODEL")
 	if apiKey == "" || baseURL == "" || model == "" {

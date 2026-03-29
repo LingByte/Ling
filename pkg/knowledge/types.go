@@ -51,12 +51,32 @@ type DeleteOptions struct {
 	Namespace string
 }
 
+type GetOptions struct {
+	Namespace string
+}
+
+type ListOptions struct {
+	Namespace string
+	Limit     int
+	Offset    string
+	Filters   map[string]any
+}
+
+type ListResult struct {
+	Records    []Record
+	NextOffset string
+}
+
 type KnowledgeHandler interface {
 	Provider() string
 
 	Upsert(ctx context.Context, records []Record, options *UpsertOptions) error
 
 	Query(ctx context.Context, text string, options *QueryOptions) ([]QueryResult, error)
+
+	Get(ctx context.Context, ids []string, options *GetOptions) ([]Record, error)
+
+	List(ctx context.Context, options *ListOptions) (*ListResult, error)
 
 	Delete(ctx context.Context, ids []string, options *DeleteOptions) error
 }

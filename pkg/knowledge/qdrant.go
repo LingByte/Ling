@@ -18,6 +18,38 @@ type Embedder interface {
 	Embed(ctx context.Context, inputs []string) ([][]float64, error)
 }
 
+func recordFromPayload(p map[string]any) Record {
+	rec := Record{}
+	if p == nil {
+		return rec
+	}
+	if v, ok := p["record_id"].(string); ok {
+		rec.ID = v
+	}
+	if v, ok := p["source"].(string); ok {
+		rec.Source = v
+	}
+	if v, ok := p["title"].(string); ok {
+		rec.Title = v
+	}
+	if v, ok := p["content"].(string); ok {
+		rec.Content = v
+	}
+	if v, ok := p["metadata"].(map[string]any); ok {
+		rec.Metadata = v
+	}
+	if v, ok := p["tags"].([]any); ok {
+		tags := make([]string, 0, len(v))
+		for _, t := range v {
+			if s, ok := t.(string); ok {
+				tags = append(tags, s)
+			}
+		}
+		rec.Tags = tags
+	}
+	return rec
+}
+
 type QdrantHandler struct {
 	BaseURL    string
 	APIKey     string
@@ -152,36 +184,107 @@ func (qh *QdrantHandler) Query(ctx context.Context, text string, options *QueryO
 
 	out := make([]QueryResult, 0, len(resp.Result))
 	for _, r := range resp.Result {
-		rec := Record{}
-		if v, ok := r.Payload["record_id"].(string); ok {
-			rec.ID = v
-		} else {
-			rec.ID = ""
-		}
-		if v, ok := r.Payload["source"].(string); ok {
-			rec.Source = v
-		}
-		if v, ok := r.Payload["title"].(string); ok {
-			rec.Title = v
-		}
-		if v, ok := r.Payload["content"].(string); ok {
-			rec.Content = v
-		}
-		if v, ok := r.Payload["metadata"].(map[string]any); ok {
-			rec.Metadata = v
-		}
-		if v, ok := r.Payload["tags"].([]any); ok {
-			tags := make([]string, 0, len(v))
-			for _, t := range v {
-				if s, ok := t.(string); ok {
-					tags = append(tags, s)
-				}
-			}
-			rec.Tags = tags
-		}
+		rec := recordFromPayload(r.Payload)
 		out = append(out, QueryResult{Record: rec, Score: r.Score})
 	}
 	return out, nil
+}
+
+func (qh *QdrantHandler) Get(ctx context.Context, ids []string, options *GetOptions) ([]Record, error) {
+	if qh == nil {
+		return nil, errors.New("handler is nil")
+	}
+	if qh.BaseURL == "" {
+		return nil, errors.New("BaseURL is required")
+	}
+	if qh.Collection == "" {
+		return nil, errors.New("Collection is required")
+	}
+	if len(ids) == 0 {
+		return []Record{}, nil
+	}
+	_ = options
+
+	pointIDs := make([]string, 0, len(ids))
+	for _, id := range ids {
+		pointIDs = append(pointIDs, qdrantPointIDFromString(id))
+	}
+
+	body := map[string]any{
+		"ids":          pointIDs,
+		"with_payload": true,
+		"with_vectors": false,
+	}
+	var resp struct {
+		Result []struct {
+			ID      any            `json:"id"`
+			Payload map[string]any `json:"payload"`
+		} `json:"result"`
+	}
+	_, err := qh.doJSON(ctx, http.MethodPost, qh.pointsRetrievePath(), body, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]Record, 0, len(resp.Result))
+	for _, r := range resp.Result {
+		out = append(out, recordFromPayload(r.Payload))
+	}
+	return out, nil
+}
+
+func (qh *QdrantHandler) List(ctx context.Context, options *ListOptions) (*ListResult, error) {
+	if qh == nil {
+		return nil, errors.New("handler is nil")
+	}
+	if qh.BaseURL == "" {
+		return nil, errors.New("BaseURL is required")
+	}
+	if qh.Collection == "" {
+		return nil, errors.New("Collection is required")
+	}
+
+	limit := 50
+	if options != nil && options.Limit > 0 {
+		limit = options.Limit
+	}
+
+	body := map[string]any{
+		"limit":        limit,
+		"with_payload": true,
+		"with_vectors": false,
+	}
+	if options != nil {
+		if strings.TrimSpace(options.Offset) != "" {
+			body["offset"] = strings.TrimSpace(options.Offset)
+		}
+		if options.Filters != nil {
+			body["filter"] = options.Filters
+		}
+	}
+
+	var resp struct {
+		Result []struct {
+			ID      any            `json:"id"`
+			Payload map[string]any `json:"payload"`
+		} `json:"result"`
+		NextPageOffset any `json:"next_page_offset"`
+	}
+	_, err := qh.doJSON(ctx, http.MethodPost, qh.pointsScrollPath(), body, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	recs := make([]Record, 0, len(resp.Result))
+	for _, r := range resp.Result {
+		recs = append(recs, recordFromPayload(r.Payload))
+	}
+
+	next := ""
+	if resp.NextPageOffset != nil {
+		next = strings.TrimSpace(fmt.Sprint(resp.NextPageOffset))
+	}
+	return &ListResult{Records: recs, NextOffset: next}, nil
 }
 
 func (qh *QdrantHandler) Delete(ctx context.Context, ids []string, options *DeleteOptions) error {
@@ -321,4 +424,12 @@ func (qh *QdrantHandler) pointsSearchPath() string {
 
 func (qh *QdrantHandler) pointsDeletePath() string {
 	return "/collections/" + qh.Collection + "/points/delete"
+}
+
+func (qh *QdrantHandler) pointsRetrievePath() string {
+	return "/collections/" + qh.Collection + "/points/retrieve"
+}
+
+func (qh *QdrantHandler) pointsScrollPath() string {
+	return "/collections/" + qh.Collection + "/points/scroll"
 }

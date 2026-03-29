@@ -2,6 +2,10 @@ package knowledge
 
 import (
 	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -120,4 +124,67 @@ func TestKnowledgeFullFlow_Integration_EmbedUpsertQueryRerank(t *testing.T) {
 	assert.GreaterOrEqual(t, top.Index, 0)
 	assert.Less(t, top.Index, len(res))
 	assert.Contains(t, docs[top.Index], "France")
+}
+
+type stubEmbedder struct{}
+
+func (s *stubEmbedder) Embed(ctx context.Context, inputs []string) ([][]float64, error) {
+	_ = ctx
+	out := make([][]float64, 0, len(inputs))
+	for range inputs {
+		out = append(out, []float64{0.1, 0.2, 0.3})
+	}
+	return out, nil
+}
+
+func TestQdrantHandler_Get(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/points/retrieve") {
+			b, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(b, &gotBody)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"result":[{"id":"x","payload":{"record_id":"rid","source":"s","title":"t","content":"c","tags":["a"],"metadata":{"k":"v"}}}]}`))
+			return
+		}
+		w.WriteHeader(404)
+	}))
+	defer srv.Close()
+
+	h := &QdrantHandler{BaseURL: srv.URL, Collection: "col", Embedder: &stubEmbedder{}}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	recs, err := h.Get(ctx, []string{"rid"}, &GetOptions{})
+	assert.NoError(t, err)
+	assert.Len(t, recs, 1)
+	assert.Equal(t, "rid", recs[0].ID)
+	assert.Equal(t, "c", recs[0].Content)
+
+	ids, ok := gotBody["ids"].([]any)
+	assert.True(t, ok)
+	assert.Equal(t, qdrantPointIDFromString("rid"), ids[0].(string))
+}
+
+func TestQdrantHandler_List(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/points/scroll") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"result":[{"id":"x","payload":{"record_id":"rid1","source":"s","title":"t","content":"c1"}}],"next_page_offset":"next"}`))
+			return
+		}
+		w.WriteHeader(404)
+	}))
+	defer srv.Close()
+
+	h := &QdrantHandler{BaseURL: srv.URL, Collection: "col", Embedder: &stubEmbedder{}}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	res, err := h.List(ctx, &ListOptions{Limit: 10, Offset: "", Filters: nil})
+	assert.NoError(t, err)
+	assert.NotNil(t, res)
+	assert.Len(t, res.Records, 1)
+	assert.Equal(t, "rid1", res.Records[0].ID)
+	assert.Equal(t, "next", res.NextOffset)
 }

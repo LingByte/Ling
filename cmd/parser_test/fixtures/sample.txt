@@ -1,4 +1,13 @@
 Hello LingByte Parser.
 
-This is a plain text file.
-Line 3.
+This is a plain text file used to test parsing and chunking.
+
+Paragraph 1: The goal is to produce enough content so the RuleChunker needs to create multiple chunks. We keep sentences short but numerous. Chunking should be stable and deterministic.
+
+Paragraph 2: The unified parser entrypoint reads from a file path or bytes, detects the type from extension, then dispatches to the correct parser implementation. This paragraph exists only to add length.
+
+Paragraph 3: When chunking, we want overlap so adjacent chunks have shared context. That helps retrieval and reduces boundary issues.
+
+Paragraph 4: Repeat a bit more content. Repeat a bit more content. Repeat a bit more content. Repeat a bit more content. Repeat a bit more content.
+
+Paragraph 5: Final paragraph. End.

@@ -4,7 +4,6 @@ package parser
 
 import (
 	"context"
-	"os"
 	"os/exec"
 	"testing"
 	"time"
@@ -13,9 +12,6 @@ import (
 )
 
 func TestOCRParser_Integration_PNG(t *testing.T) {
-	if os.Getenv("OCR_INTEGRATION_TESTS") != "1" {
-		t.Skip("set OCR_INTEGRATION_TESTS=1 to enable OCR integration tests")
-	}
 	if _, err := exec.LookPath("tesseract"); err != nil {
 		t.Skip("tesseract not found in PATH")
 	}

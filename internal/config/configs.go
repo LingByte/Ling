@@ -2,7 +2,6 @@ package config
 
 import (
 	"log"
-	"os"
 
 	"github.com/LingByte/Ling/pkg/utils"
 )
@@ -18,7 +17,7 @@ type Config struct {
 
 func Load() error {
 	// 1. Load .env file based on environment (don't error if it doesn't exist, use default values)
-	env := os.Getenv("MODE")
+	env := utils.GetEnv("MODE")
 	err := utils.LoadEnv(env)
 	if err != nil {
 		// Only log when .env file doesn't exist, don't affect startup
