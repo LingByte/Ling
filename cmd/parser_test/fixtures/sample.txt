@@ -1,0 +1,4 @@
+Hello LingByte Parser.
+
+This is a plain text file.
+Line 3.
