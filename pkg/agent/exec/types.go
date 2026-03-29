@@ -34,12 +34,17 @@ type State struct {
 
 	// Shared scratchpad / notes.
 	Notes string
+
+	// Per-task feedback from evaluator for retry loops.
+	Feedback map[string]string
 }
 
 type TaskResult struct {
 	TaskID   string
 	Status   TaskStatus
 	Output   string
+	Attempts int
+	Feedback string
 	Error    string
 	Started  time.Time
 	Finished time.Time
@@ -56,7 +61,12 @@ type Runner interface {
 	RunTask(ctx context.Context, task plan.Task, st *State) (string, error)
 }
 
+type Evaluator interface {
+	Evaluate(ctx context.Context, task plan.Task, output string, st *State) (ok bool, feedback string, err error)
+}
+
 type Options struct {
 	StopOnError bool
 	MaxTasks    int
+	MaxAttempts int
 }

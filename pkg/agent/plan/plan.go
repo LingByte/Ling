@@ -79,8 +79,9 @@ func buildPrompt(goal string, maxTasks int) string {
 		"- 简单任务不要拆分，但仍然要输出 1 个 task。\n" +
 		"- 复杂任务可以拆分为多个 task，总数不超过 " + itoa(maxTasks) + "。\n" +
 		"- task 要可执行、描述清晰，按依赖顺序列出。\n" +
+		"- 为每个 task 给出 expected（验收标准/期望输出特征），用于执行后自检。\n" +
 		"- 只输出 JSON，不要解释，不要 markdown。\n" +
-		"JSON schema: {\"goal\":string,\"tasks\":[{\"id\":string,\"title\":string,\"instruction\":string,\"depends_on\":[string],\"can_parallel\":bool,\"input\":object}]}\n" +
+		"JSON schema: {\"goal\":string,\"tasks\":[{\"id\":string,\"title\":string,\"instruction\":string,\"expected\":string,\"depends_on\":[string],\"can_parallel\":bool,\"input\":object}]}\n" +
 		"目标: " + goal + "\n"
 }
 

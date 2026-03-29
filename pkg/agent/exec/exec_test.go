@@ -38,7 +38,7 @@ func TestTopoOrder(t *testing.T) {
 }
 
 func TestExecutor_StopOnError(t *testing.T) {
-	e := &Executor{Runner: &stubRunner{out: map[string]string{"a": "ok"}, err: map[string]error{"b": errors.New("x")}}, Opts: Options{StopOnError: true}}
+	e := &Executor{Runner: &stubRunner{out: map[string]string{"a": "ok"}, err: map[string]error{"b": errors.New("x")}}, Opts: Options{StopOnError: true, MaxAttempts: 1}}
 	p := &plan.Plan{Goal: "g", Tasks: []plan.Task{{ID: "a"}, {ID: "b", DependsOn: []string{"a"}}}}
 	res, err := e.Run(context.Background(), p)
 	if err == nil {

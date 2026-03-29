@@ -20,6 +20,7 @@ type Task struct {
 	ID          string         `json:"id"`
 	Title       string         `json:"title"`
 	Instruction string         `json:"instruction"`
+	Expected    string         `json:"expected,omitempty"`
 	DependsOn   []string       `json:"depends_on,omitempty"`
 	CanParallel bool           `json:"can_parallel,omitempty"`
 	Input       map[string]any `json:"input,omitempty"`

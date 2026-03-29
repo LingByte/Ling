@@ -50,10 +50,20 @@ func main() {
 
 	fmt.Printf("goal=%q tasks=%d\n", pl.Goal, len(pl.Tasks))
 	for i, t := range pl.Tasks {
-		fmt.Printf("  - [%d] id=%s title=%q depends=%v instruction=%q\n", i, t.ID, t.Title, t.DependsOn, t.Instruction)
+		exp := strings.TrimSpace(t.Expected)
+		if exp != "" {
+			fmt.Printf("  - [%d] id=%s title=%q depends=%v expected=%q\n", i, t.ID, t.Title, t.DependsOn, exp)
+			fmt.Printf("        instruction=%q\n", t.Instruction)
+		} else {
+			fmt.Printf("  - [%d] id=%s title=%q depends=%v instruction=%q\n", i, t.ID, t.Title, t.DependsOn, t.Instruction)
+		}
 	}
 
-	executor := &exec.Executor{Runner: &exec.LLMTaskRunner{LLM: h, Model: model}, Opts: exec.Options{StopOnError: true, MaxTasks: 32}}
+	executor := &exec.Executor{
+		Runner:    &exec.LLMTaskRunner{LLM: h, Model: model},
+		Evaluator: &exec.LLMTaskEvaluator{LLM: h, Model: model},
+		Opts:      exec.Options{StopOnError: true, MaxTasks: 32, MaxAttempts: 3},
+	}
 	res, err := executor.Run(ctx, pl)
 	if err != nil {
 		fmt.Printf("execute failed: %v\n", err)
@@ -61,9 +71,12 @@ func main() {
 
 	fmt.Printf("\nExecution results:\n")
 	for _, tr := range res.TaskResults {
-		fmt.Printf("- task=%s status=%s latency=%s\n", tr.TaskID, tr.Status, tr.Latency)
+		fmt.Printf("- task=%s status=%s attempts=%d latency=%s\n", tr.TaskID, tr.Status, tr.Attempts, tr.Latency)
 		if strings.TrimSpace(tr.Error) != "" {
 			fmt.Printf("  error=%s\n", tr.Error)
+		}
+		if strings.TrimSpace(tr.Feedback) != "" {
+			fmt.Printf("  feedback=%q\n", strings.TrimSpace(tr.Feedback))
 		}
 		if strings.TrimSpace(tr.Output) != "" {
 			out := strings.TrimSpace(tr.Output)

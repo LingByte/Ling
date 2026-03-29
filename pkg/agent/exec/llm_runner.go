@@ -52,6 +52,13 @@ func (r *LLMTaskRunner) RunTask(ctx context.Context, task plan.Task, st *State) 
 		}
 		b.WriteString("\n")
 	}
+	if st != nil && st.Feedback != nil {
+		if fb := strings.TrimSpace(st.Feedback[task.ID]); fb != "" {
+			b.WriteString("验收反馈（上一轮未通过原因）：\n")
+			b.WriteString(fb)
+			b.WriteString("\n\n")
+		}
+	}
 	b.WriteString("请输出该任务的结果：\n")
 
 	out, err := r.LLM.Query(b.String(), model)
