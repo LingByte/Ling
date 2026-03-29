@@ -47,6 +47,10 @@ type LLMOptions struct {
 type QueryOptions struct {
 	Model            string
 	N                int
+	MaxTokens        int
+	Temperature      float32
+	TopP             float32
+	LogitBias        map[string]int
 	FilterEmoji      bool
 	EnableJSONOutput bool
 	OutputFormat     string
@@ -94,6 +98,8 @@ type LLMDetails struct {
 	Input                   string
 	SystemPrompt            string
 	N                       int
+	MaxTokens               int
+	EstimatedMaxOutputChars int
 	FilterEmoji             bool
 	RequestedOutputFormat   string
 	AppliedResponseFormat   string
@@ -117,6 +123,14 @@ type LLMHandler interface {
 	Query(text, model string) (string, error)
 
 	Provider() string
+
+	ResetMemory()
+
+	SummarizeMemory(model string) (string, error)
+
+	SetMaxMemoryMessages(n int)
+
+	GetMaxMemoryMessages() int
 }
 
 func GenerateLingRequestID() string {
