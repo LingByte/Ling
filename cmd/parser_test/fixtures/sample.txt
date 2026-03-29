@@ -11,3 +11,5 @@ Paragraph 3: When chunking, we want overlap so adjacent chunks have shared conte
 Paragraph 4: Repeat a bit more content. Repeat a bit more content. Repeat a bit more content. Repeat a bit more content. Repeat a bit more content.
 
 Paragraph 5: Final paragraph. End.
+
+Paragraph 6: 政策信息示例。地点：北京。2025年的政策将在2025-03-01发布，用于测试“2025 北京 政策”这类查询的结构化召回与过滤。

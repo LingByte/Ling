@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/LingByte/Ling/pkg/chunk"
+	"github.com/LingByte/Ling/pkg/extract"
 	"github.com/LingByte/Ling/pkg/knowledge"
 	"github.com/LingByte/Ling/pkg/llm"
 	"github.com/LingByte/Ling/pkg/parser"
@@ -71,16 +72,37 @@ func main() {
 	records := make([]knowledge.Record, 0, len(chunks))
 	ids := make([]string, 0, len(chunks))
 	docID := strings.TrimSuffix(parseRes.FileName, filepath.Ext(parseRes.FileName))
+
+	extractor, extractorName := buildExtractor(ctx)
+	if extractor == nil {
+		fmt.Printf("extractor: disabled\n")
+	} else {
+		fmt.Printf("extractor: %s\n", extractorName)
+	}
+
 	for _, c := range chunks {
 		id := fmt.Sprintf("%s#chunk_%d", docID, c.Index)
 		ids = append(ids, id)
+		tags := []string{"ingest_test"}
+		meta := map[string]any{"chunk_index": c.Index, "chunk_title": c.Title}
+		if extractor != nil {
+			x, err := extractor.Extract(ctx, extract.ChunkInput{DocumentTitle: parseRes.FileName, FileName: parseRes.FileName, Source: "ingest_test", Namespace: "", ChunkIndex: c.Index, Text: c.Text}, &extract.Options{MaxTags: 12})
+			if err == nil && x != nil {
+				if len(x.Tags) > 0 {
+					tags = append(tags, x.Tags...)
+				}
+				for k, v := range x.Metadata {
+					meta[k] = v
+				}
+			}
+		}
 		records = append(records, knowledge.Record{
 			ID:        id,
 			Source:    "ingest_test",
 			Title:     parseRes.FileName,
 			Content:   c.Text,
-			Tags:      []string{"ingest_test"},
-			Metadata:  map[string]any{"chunk_index": c.Index, "chunk_title": c.Title},
+			Tags:      tags,
+			Metadata:  meta,
 			CreatedAt: now,
 			UpdatedAt: now,
 		})
@@ -162,6 +184,39 @@ func buildChunker(ctx context.Context) (chunk.Chunker, string, error) {
 		return c2, "fallback", nil
 	}
 	return c, "openai", nil
+}
+
+func buildExtractor(ctx context.Context) (extract.Extractor, string) {
+	mode := strings.ToLower(strings.TrimSpace(utils.GetEnv("EXTRACTOR")))
+	if mode == "" {
+		mode = extract.ExtractorRule
+	}
+	if mode == "off" || mode == "none" {
+		return nil, "off"
+	}
+	if mode != extract.ExtractorLLM {
+		e, err := extract.New(mode, nil)
+		if err != nil {
+			return nil, "off"
+		}
+		return e, mode
+	}
+
+	apiKey := strings.TrimSpace(utils.GetEnv("OPENAI_API_KEY"))
+	baseURL := strings.TrimSpace(utils.GetEnv("OPENAI_BASE_URL"))
+	model := strings.TrimSpace(utils.GetEnv("OPENAI_MODEL"))
+	if apiKey == "" || baseURL == "" || model == "" {
+		return nil, "off"
+	}
+	h, err := llm.NewOpenaiHandler(ctx, &llm.LLMOptions{ApiKey: apiKey, BaseURL: baseURL})
+	if err != nil {
+		return nil, "off"
+	}
+	e, err := extract.New(extract.ExtractorLLM, &extract.FactoryOptions{LLM: h, Model: model})
+	if err != nil {
+		return nil, "off"
+	}
+	return e, "llm"
 }
 
 func answerWithRetrievedKnowledge(ctx context.Context, question string, results []knowledge.QueryResult) (string, error) {
