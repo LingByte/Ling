@@ -4,7 +4,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/LingByte/Ling/internal/utils"
+	"github.com/LingByte/Ling/pkg/utils"
 )
 
 var GlobalConfig *Config
@@ -15,7 +15,6 @@ type Config struct {
 	APIKey  string `env:"API_KEY"`
 	Model   string `env:"MODEL"`
 }
-
 
 func Load() error {
 	// 1. Load .env file based on environment (don't error if it doesn't exist, use default values)
