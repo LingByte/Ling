@@ -41,7 +41,13 @@ type LLMOptions struct {
 	ApiKey       string
 	BaseURL      string
 	SystemPrompt string
+	FewShotExamples []FewShotExample
 	logger       *zap.Logger
+}
+
+type FewShotExample struct {
+	User      string
+	Assistant string
 }
 
 type QueryOptions struct {

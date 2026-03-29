@@ -233,8 +233,9 @@ func answerWithRetrievedKnowledge(ctx context.Context, question string, results 
 	}
 
 	ctxText := buildContextFromResults(results)
-	prompt := "You are a helpful assistant. Answer the user's question using ONLY the provided context. If the context is insufficient, say you don't know.\n\n" +
+	prompt := "You are a helpful assistant. Answer the user's question using ONLY the provided context.\n\n" +
 		"Context:\n" + ctxText + "\n\n" +
+		"Instruction: 如果提供的资料中找不到答案,直接回回复'未找到相关信息'。禁止使用你自己的知识补充。\n\n" +
 		"Question: " + question + "\n" +
 		"Answer:"
 

@@ -51,6 +51,7 @@ type OpenaiHandler struct {
 	ctx               context.Context
 	client            *openai.Client
 	systemPrompt      string
+	fewShotExamples   []FewShotExample
 	baseUrl           string
 	logger            *zap.Logger
 	mutex             sync.Mutex
@@ -76,6 +77,7 @@ func NewOpenaiHandler(ctx context.Context, llmOptions *LLMOptions) (*OpenaiHandl
 		client:            client,
 		baseUrl:           llmOptions.BaseURL,
 		systemPrompt:      llmOptions.SystemPrompt,
+		fewShotExamples:   llmOptions.FewShotExamples,
 		logger:            llmOptions.logger,
 		messages:          make([]openai.ChatCompletionMessage, 0),
 		maxMemoryMessages: defaultMaxMemoryMessages,
@@ -307,6 +309,18 @@ func (oh *OpenaiHandler) QueryWithOptions(text string, options *QueryOptions) (*
 			Role:    openai.ChatMessageRoleSystem,
 			Content: oh.systemPrompt,
 		})
+	}
+	if len(oh.fewShotExamples) > 0 {
+		for _, ex := range oh.fewShotExamples {
+			u := strings.TrimSpace(ex.User)
+			a := strings.TrimSpace(ex.Assistant)
+			if u != "" {
+				sanitizedMessages = append(sanitizedMessages, openai.ChatCompletionMessage{Role: openai.ChatMessageRoleUser, Content: u})
+			}
+			if a != "" {
+				sanitizedMessages = append(sanitizedMessages, openai.ChatCompletionMessage{Role: openai.ChatMessageRoleAssistant, Content: a})
+			}
+		}
 	}
 
 	var summarySnapshot string
