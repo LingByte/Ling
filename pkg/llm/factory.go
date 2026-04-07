@@ -49,36 +49,15 @@ func NewProviderHandler(ctx context.Context, provider string, llmOptions *LLMOpt
 
 	switch selected {
 	case ProviderOllama:
-		if strings.TrimSpace(opts.BaseURL) == "" {
-			opts.BaseURL = "http://localhost:11434/v1"
-		}
-		if strings.TrimSpace(opts.ApiKey) == "" {
-			opts.ApiKey = "ollama"
-		}
-		return newOpenAICompatibleHandler(ctx, &opts, LLM_OLLAMA)
+		return NewOllamaHandler(ctx, &opts)
 	case ProviderAlibaba:
-		// DashScope OpenAI-compatible endpoint.
-		if strings.TrimSpace(opts.BaseURL) == "" {
-			opts.BaseURL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-		}
-		return newOpenAICompatibleHandler(ctx, &opts, LLM_ALIBABA)
+		return NewAlibabaHandler(ctx, &opts)
 	case ProviderAnthropic:
-		// Anthropic OpenAI-compatible endpoint.
-		if strings.TrimSpace(opts.BaseURL) == "" {
-			opts.BaseURL = "https://api.anthropic.com/v1"
-		}
-		return newOpenAICompatibleHandler(ctx, &opts, LLM_ANTHROPIC)
+		return NewAnthropicHandler(ctx, &opts)
 	case ProviderLMStudio:
-		if strings.TrimSpace(opts.BaseURL) == "" {
-			opts.BaseURL = "http://localhost:1234/v1"
-		}
-		if strings.TrimSpace(opts.ApiKey) == "" {
-			opts.ApiKey = "lmstudio"
-		}
-		return newOpenAICompatibleHandler(ctx, &opts, LLM_LMSTUDIO)
+		return NewLMStudioHandler(ctx, &opts)
 	case ProviderCoze:
-		// If user configures a Coze OpenAI-compatible gateway, it can be used directly.
-		return newOpenAICompatibleHandler(ctx, &opts, LLM_COZE)
+		return NewCozeHandler(ctx, &opts)
 	default:
 		return newOpenAICompatibleHandler(ctx, &opts, LLM_OPENAI)
 	}

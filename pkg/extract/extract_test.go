@@ -12,6 +12,21 @@ type fakeLLM struct{ resp string }
 
 func (f *fakeLLM) Query(text, model string) (string, error)     { return f.resp, nil }
 func (f *fakeLLM) Provider() string                             { return "fake" }
+func (f *fakeLLM) QueryWithOptions(text string, options *llm.QueryOptions) (*llm.QueryResponse, error) {
+	_ = text
+	_ = options
+	return &llm.QueryResponse{Choices: []llm.QueryChoice{{Index: 0, Content: f.resp}}}, nil
+}
+func (f *fakeLLM) QueryStream(text string, options *llm.QueryOptions, callback func(segment string, isComplete bool) error) (*llm.QueryResponse, error) {
+	_ = text
+	_ = options
+	if callback != nil {
+		_ = callback(f.resp, false)
+		_ = callback("", true)
+	}
+	return &llm.QueryResponse{Choices: []llm.QueryChoice{{Index: 0, Content: f.resp}}}, nil
+}
+func (f *fakeLLM) Interrupt()                                  {}
 func (f *fakeLLM) ResetMemory()                                 {}
 func (f *fakeLLM) SummarizeMemory(model string) (string, error) { return "", nil }
 func (f *fakeLLM) SetMaxMemoryMessages(n int)                   {}

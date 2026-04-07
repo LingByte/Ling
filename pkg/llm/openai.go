@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"regexp"
 	"strings"
 	"sync"
@@ -61,6 +62,10 @@ type OpenaiHandler struct {
 	maxMemoryMessages int
 	summarizing       atomic.Bool
 	summarizeSeq      uint64
+	cancelMu          sync.Mutex
+	currentCancel     context.CancelFunc
+	currentCancelID   uint64
+	cancelSeq         uint64
 }
 
 func NewOpenaiHandler(ctx context.Context, llmOptions *LLMOptions) (*OpenaiHandler, error) {
@@ -141,7 +146,7 @@ func (oh *OpenaiHandler) SummarizeMemory(model string) (string, error) {
 		return oh.summary, nil
 	}
 	oh.summary = newSummary
-	oh.messages = oh.messages[:0]
+	oh.compactMessagesKeepNewer(len(snapshot))
 	return oh.summary, nil
 }
 
@@ -190,6 +195,7 @@ func (oh *OpenaiHandler) generateSummary(model string, messages []openai.ChatCom
 }
 
 func (oh *OpenaiHandler) startAsyncSummarizeIfNeeded(model string, snapshot []openai.ChatCompletionMessage, previousSummary string, seq uint64) {
+	snapshotLen := len(snapshot)
 	go func() {
 		newSummary, err := oh.generateSummary(model, snapshot, previousSummary)
 		oh.mutex.Lock()
@@ -207,8 +213,22 @@ func (oh *OpenaiHandler) startAsyncSummarizeIfNeeded(model string, snapshot []op
 			return
 		}
 		oh.summary = newSummary
-		oh.messages = oh.messages[:0]
+		oh.compactMessagesKeepNewer(snapshotLen)
 	}()
+}
+
+func (oh *OpenaiHandler) compactMessagesKeepNewer(snapshotLen int) {
+	if snapshotLen <= 0 {
+		oh.messages = oh.messages[:0]
+		return
+	}
+	if len(oh.messages) <= snapshotLen {
+		oh.messages = oh.messages[:0]
+		return
+	}
+	tail := make([]openai.ChatCompletionMessage, len(oh.messages)-snapshotLen)
+	copy(tail, oh.messages[snapshotLen:])
+	oh.messages = tail
 }
 
 func (oh *OpenaiHandler) SetMaxMemoryMessages(n int) {
@@ -235,6 +255,33 @@ func (oh *OpenaiHandler) Provider() string {
 		return LLM_OPENAI
 	}
 	return oh.provider
+}
+
+func (oh *OpenaiHandler) Interrupt() {
+	oh.cancelMu.Lock()
+	cancel := oh.currentCancel
+	oh.cancelMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
+
+func (oh *OpenaiHandler) setCurrentCancel(cancel context.CancelFunc) uint64 {
+	id := atomic.AddUint64(&oh.cancelSeq, 1)
+	oh.cancelMu.Lock()
+	oh.currentCancel = cancel
+	oh.currentCancelID = id
+	oh.cancelMu.Unlock()
+	return id
+}
+
+func (oh *OpenaiHandler) clearCurrentCancel(id uint64) {
+	oh.cancelMu.Lock()
+	if oh.currentCancelID == id {
+		oh.currentCancel = nil
+		oh.currentCancelID = 0
+	}
+	oh.cancelMu.Unlock()
 }
 
 func (oh *OpenaiHandler) Query(text, model string) (string, error) {
@@ -400,7 +447,13 @@ func (oh *OpenaiHandler) QueryWithOptions(text string, options *QueryOptions) (*
 	if options.LogitBias != nil {
 		request.LogitBias = options.LogitBias
 	}
-	response, err := oh.client.CreateChatCompletion(oh.ctx, request)
+	reqCtx, cancel := context.WithCancel(oh.ctx)
+	cancelID := oh.setCurrentCancel(cancel)
+	defer func() {
+		oh.clearCurrentCancel(cancelID)
+		cancel()
+	}()
+	response, err := oh.client.CreateChatCompletion(reqCtx, request)
 	if err != nil {
 		return nil, err
 	}
@@ -521,4 +574,159 @@ func (oh *OpenaiHandler) QueryWithOptions(text string, options *QueryOptions) (*
 	}
 	utils.Sig().Emit(constants.LLMUsage, "internal.llm", llmDetails)
 	return resp, nil
+}
+
+func (oh *OpenaiHandler) QueryStream(text string, options *QueryOptions, callback func(segment string, isComplete bool) error) (*QueryResponse, error) {
+	if options == nil {
+		options = &QueryOptions{}
+	}
+	n := options.N
+	if n <= 0 {
+		n = 1
+	}
+	model := options.Model
+	if model == "" {
+		model = constants.DefaultModel
+	}
+
+	requestID := GenerateLingRequestID()
+	messages := make([]openai.ChatCompletionMessage, 0)
+	if oh.systemPrompt != "" {
+		messages = append(messages, openai.ChatCompletionMessage{Role: openai.ChatMessageRoleSystem, Content: oh.systemPrompt})
+	}
+	if len(oh.fewShotExamples) > 0 {
+		for _, ex := range oh.fewShotExamples {
+			u := strings.TrimSpace(ex.User)
+			a := strings.TrimSpace(ex.Assistant)
+			if u != "" {
+				messages = append(messages, openai.ChatCompletionMessage{Role: openai.ChatMessageRoleUser, Content: u})
+			}
+			if a != "" {
+				messages = append(messages, openai.ChatCompletionMessage{Role: openai.ChatMessageRoleAssistant, Content: a})
+			}
+		}
+	}
+
+	oh.mutex.Lock()
+	summarySnapshot := oh.summary
+	maxMemoryMessages := oh.maxMemoryMessages
+	historySnapshot := make([]openai.ChatCompletionMessage, len(oh.messages))
+	copy(historySnapshot, oh.messages)
+	oh.mutex.Unlock()
+	if summarySnapshot != "" {
+		messages = append(messages, openai.ChatCompletionMessage{
+			Role:    openai.ChatMessageRoleSystem,
+			Content: "Conversation summary so far: " + summarySnapshot,
+		})
+	}
+	if len(historySnapshot) > 0 {
+		if maxMemoryMessages <= 0 {
+			maxMemoryMessages = defaultMaxMemoryMessages
+		}
+		if len(historySnapshot) > maxMemoryMessages {
+			historySnapshot = historySnapshot[len(historySnapshot)-maxMemoryMessages:]
+		}
+		messages = append(messages, historySnapshot...)
+	}
+	messages = append(messages, openai.ChatCompletionMessage{Role: openai.ChatMessageRoleUser, Content: text})
+
+	request := openai.ChatCompletionRequest{
+		Model:    model,
+		N:        n,
+		User:     requestID,
+		Messages: messages,
+		Stream:   true,
+	}
+	if options.MaxTokens > 0 {
+		request.MaxTokens = options.MaxTokens
+	}
+	if options.Temperature != 0 {
+		request.Temperature = options.Temperature
+	}
+	if options.TopP != 0 {
+		request.TopP = options.TopP
+	}
+	if options.LogitBias != nil {
+		request.LogitBias = options.LogitBias
+	}
+
+	reqCtx, cancel := context.WithCancel(oh.ctx)
+	cancelID := oh.setCurrentCancel(cancel)
+	defer func() {
+		oh.clearCurrentCancel(cancelID)
+		cancel()
+	}()
+	stream, err := oh.client.CreateChatCompletionStream(reqCtx, request)
+	if err != nil {
+		return nil, err
+	}
+	defer stream.Close()
+
+	var content strings.Builder
+	for {
+		chunkResp, e := stream.Recv()
+		if errors.Is(e, context.Canceled) {
+			return nil, e
+		}
+		if e != nil {
+			if errors.Is(e, io.EOF) {
+				break
+			}
+			return nil, e
+		}
+		if len(chunkResp.Choices) == 0 {
+			continue
+		}
+		delta := chunkResp.Choices[0].Delta.Content
+		if delta == "" {
+			continue
+		}
+		if options.FilterEmoji {
+			delta = emojiRegex.ReplaceAllString(delta, "")
+		}
+		content.WriteString(delta)
+		if callback != nil {
+			if err := callback(delta, false); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if callback != nil {
+		if err := callback("", true); err != nil {
+			return nil, err
+		}
+	}
+
+	finalText := strings.TrimSpace(content.String())
+	oh.mutex.Lock()
+	oh.messages = append(oh.messages,
+		openai.ChatCompletionMessage{Role: openai.ChatMessageRoleUser, Content: text},
+		openai.ChatCompletionMessage{Role: openai.ChatMessageRoleAssistant, Content: finalText},
+	)
+	if maxMemoryMessages <= 0 {
+		maxMemoryMessages = defaultMaxMemoryMessages
+	}
+	if len(oh.messages) > maxMemoryMessages {
+		oh.messages = oh.messages[len(oh.messages)-maxMemoryMessages:]
+	}
+	localSummary := oh.summary
+	shouldStartSummarize := len(oh.messages) >= maxMemoryMessages
+	if shouldStartSummarize && !oh.summarizing.Load() {
+		oh.summarizing.Store(true)
+		seq := atomic.AddUint64(&oh.summarizeSeq, 1)
+		snapshot := make([]openai.ChatCompletionMessage, len(oh.messages))
+		copy(snapshot, oh.messages)
+		oh.mutex.Unlock()
+		oh.startAsyncSummarizeIfNeeded(model, snapshot, localSummary, seq)
+	} else {
+		oh.mutex.Unlock()
+	}
+
+	return &QueryResponse{
+		Provider: oh.Provider(),
+		Model:    model,
+		Choices: []QueryChoice{
+			{Index: 0, Content: finalText, FinishReason: "stop"},
+		},
+	}, nil
 }

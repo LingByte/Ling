@@ -3,6 +3,7 @@ package chunk
 import (
 	"testing"
 
+	"github.com/LingByte/Ling/pkg/llm"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -12,6 +13,21 @@ func (f *fakeChunkLLM) Query(text, model string) (string, error) {
 	return `[{"title":"t","text":"x"}]`, nil
 }
 func (f *fakeChunkLLM) Provider() string { return "fake" }
+func (f *fakeChunkLLM) QueryWithOptions(text string, options *llm.QueryOptions) (*llm.QueryResponse, error) {
+	_ = text
+	_ = options
+	return &llm.QueryResponse{Choices: []llm.QueryChoice{{Index: 0, Content: `[{"title":"t","text":"x"}]`}}}, nil
+}
+func (f *fakeChunkLLM) QueryStream(text string, options *llm.QueryOptions, callback func(segment string, isComplete bool) error) (*llm.QueryResponse, error) {
+	_ = text
+	_ = options
+	if callback != nil {
+		_ = callback(`[{"title":"t","text":"x"}]`, false)
+		_ = callback("", true)
+	}
+	return &llm.QueryResponse{Choices: []llm.QueryChoice{{Index: 0, Content: `[{"title":"t","text":"x"}]`}}}, nil
+}
+func (f *fakeChunkLLM) Interrupt()                    {}
 func (f *fakeChunkLLM) ResetMemory()     {}
 func (f *fakeChunkLLM) SummarizeMemory(model string) (string, error) {
 	return "", nil
