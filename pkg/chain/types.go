@@ -1,11 +1,11 @@
 package chain
 
 import (
-	"context"
 	"errors"
 	"time"
 
 	"github.com/LingByte/Ling/pkg/knowledge"
+	"github.com/LingByte/Ling/pkg/pipeline"
 )
 
 var (
@@ -33,21 +33,7 @@ type State struct {
 	Errors []error
 }
 
-type Step interface {
-	Name() string
-	Run(ctx context.Context, s *State) error
-}
-
-type StepFunc struct {
-	StepName string
-	Fn       func(ctx context.Context, s *State) error
-}
-
-func (f StepFunc) Name() string { return f.StepName }
-
-func (f StepFunc) Run(ctx context.Context, s *State) error {
-	if f.Fn == nil {
-		return nil
-	}
-	return f.Fn(ctx, s)
-}
+type Step = pipeline.Step[*State]
+type StepFunc = pipeline.StepFunc[*State]
+type RouterStep = pipeline.RouterStep[*State]
+type RetryStep = pipeline.RetryStep[*State]

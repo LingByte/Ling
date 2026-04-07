@@ -3,6 +3,8 @@ package chain
 import (
 	"context"
 	"time"
+
+	"github.com/LingByte/Ling/pkg/pipeline"
 )
 
 type Options struct {
@@ -61,32 +63,44 @@ func (c *Chain) Run(ctx context.Context, s *State) error {
 		s.Meta = map[string]any{}
 	}
 
+	p := pipeline.NewBuilder[*State]().
+		WithOptions(pipeline.RunOptions[*State]{
+			StopOnError:  c.opts.StopOnError,
+			TrackTimings: c.opts.TrackTimings,
+			OnStepTiming: func(step string, d time.Duration, st *State) {
+				st.Timings[step] = d
+			},
+			OnStepError: func(_ string, err error, st *State) bool {
+				if err == ErrStop {
+					return false
+				}
+				if c.opts.StopOnError {
+					return true
+				}
+				st.Errors = append(st.Errors, err)
+				return false
+			},
+		})
 	for _, st := range c.steps {
 		if st == nil {
 			continue
 		}
-		if s.Blocked {
-			return ErrStop
-		}
-		name := st.Name()
-		var start time.Time
-		if c.opts.TrackTimings {
-			start = time.Now()
-		}
-		err := st.Run(ctx, s)
-		if c.opts.TrackTimings {
-			s.Timings[name] = time.Since(start)
-		}
-		if err == nil {
-			continue
-		}
-		if err == ErrStop {
-			return nil
-		}
-		if c.opts.StopOnError {
-			return err
-		}
-		s.Errors = append(s.Errors, err)
+		step := st
+		p.Add(StepFunc{
+			StepName: step.Name(),
+			Fn: func(ctx context.Context, state *State) error {
+				if state.Blocked {
+					return ErrStop
+				}
+				return step.Run(ctx, state)
+			},
+		})
 	}
-	return nil
+	pipe := p.Build()
+
+	err := pipe.Run(ctx, s)
+	if err == ErrStop {
+		return nil
+	}
+	return err
 }

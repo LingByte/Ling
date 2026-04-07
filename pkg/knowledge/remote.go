@@ -12,6 +12,11 @@ import (
 	"time"
 )
 
+const (
+	maxEmbedInputChars  = 12000
+	maxEmbedBatchInputs = 16
+)
+
 type NvidiaEmbedClient struct {
 	BaseURL    string
 	APIKey     string
@@ -44,51 +49,71 @@ func (c *NvidiaEmbedClient) Embed(ctx context.Context, inputs []string) ([][]flo
 	if !strings.HasSuffix(endpoint, "/embeddings") {
 		endpoint += "/embeddings"
 	}
-	body := map[string]any{
-		"model": c.Model,
-		"input": inputs,
-	}
-	b, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(b))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+c.APIKey)
-
-	resp, err := cl.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	respBody, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("embeddings request failed: status=%d body=%s", resp.StatusCode, string(respBody))
-	}
-
-	var parsed struct {
-		Data []struct {
-			Embedding []float64 `json:"embedding"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(respBody, &parsed); err != nil {
-		return nil, err
-	}
-
-	out := make([][]float64, 0, len(parsed.Data))
-	for _, d := range parsed.Data {
-		if len(d.Embedding) == 0 {
-			continue
+	sanitized := make([]string, 0, len(inputs))
+	for _, in := range inputs {
+		in = strings.TrimSpace(in)
+		if in == "" {
+			in = "-"
 		}
-		out = append(out, d.Embedding)
+		if len(in) > maxEmbedInputChars {
+			in = in[:maxEmbedInputChars]
+		}
+		sanitized = append(sanitized, in)
 	}
-	if len(out) == 0 {
-		return nil, errors.New("no embeddings returned")
+
+	out := make([][]float64, 0, len(sanitized))
+	for start := 0; start < len(sanitized); start += maxEmbedBatchInputs {
+		end := start + maxEmbedBatchInputs
+		if end > len(sanitized) {
+			end = len(sanitized)
+		}
+		batch := sanitized[start:end]
+		body := map[string]any{
+			"model": c.Model,
+			"input": batch,
+		}
+		b, err := json.Marshal(body)
+		if err != nil {
+			return nil, err
+		}
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(b))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+c.APIKey)
+
+		resp, err := cl.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		respBody, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return nil, fmt.Errorf("embeddings request failed: status=%d body=%s", resp.StatusCode, string(respBody))
+		}
+
+		var parsed struct {
+			Data []struct {
+				Embedding []float64 `json:"embedding"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(respBody, &parsed); err != nil {
+			return nil, err
+		}
+		if len(parsed.Data) == 0 {
+			return nil, errors.New("no embeddings returned")
+		}
+		for _, d := range parsed.Data {
+			if len(d.Embedding) == 0 {
+				return nil, errors.New("empty embedding returned")
+			}
+			out = append(out, d.Embedding)
+		}
+	}
+	if len(out) != len(sanitized) {
+		return nil, fmt.Errorf("embedding count mismatch: got=%d want=%d", len(out), len(sanitized))
 	}
 	return out, nil
 }

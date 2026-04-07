@@ -50,6 +50,7 @@ func buildTranscriptForSummary(messages []openai.ChatCompletionMessage) string {
 type OpenaiHandler struct {
 	ctx               context.Context
 	client            *openai.Client
+	provider          string
 	systemPrompt      string
 	fewShotExamples   []FewShotExample
 	baseUrl           string
@@ -75,6 +76,7 @@ func NewOpenaiHandler(ctx context.Context, llmOptions *LLMOptions) (*OpenaiHandl
 	return &OpenaiHandler{
 		ctx:               ctx,
 		client:            client,
+		provider:          LLM_OPENAI,
 		baseUrl:           llmOptions.BaseURL,
 		systemPrompt:      llmOptions.SystemPrompt,
 		fewShotExamples:   llmOptions.FewShotExamples,
@@ -82,6 +84,15 @@ func NewOpenaiHandler(ctx context.Context, llmOptions *LLMOptions) (*OpenaiHandl
 		messages:          make([]openai.ChatCompletionMessage, 0),
 		maxMemoryMessages: defaultMaxMemoryMessages,
 	}, nil
+}
+
+func newOpenAICompatibleHandler(ctx context.Context, llmOptions *LLMOptions, provider string) (*OpenaiHandler, error) {
+	h, err := NewOpenaiHandler(ctx, llmOptions)
+	if err != nil {
+		return nil, err
+	}
+	h.provider = provider
+	return h, nil
 }
 
 func (oh *OpenaiHandler) ResetMemory() {
@@ -220,7 +231,10 @@ func (oh *OpenaiHandler) GetMaxMemoryMessages() int {
 }
 
 func (oh *OpenaiHandler) Provider() string {
-	return LLM_OPENAI
+	if strings.TrimSpace(oh.provider) == "" {
+		return LLM_OPENAI
+	}
+	return oh.provider
 }
 
 func (oh *OpenaiHandler) Query(text, model string) (string, error) {

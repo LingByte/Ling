@@ -88,6 +88,20 @@ func packParagraphs(paras []string, maxChars int) []string {
 		if p == "" {
 			continue
 		}
+		if len(p) > maxChars {
+			// Oversized paragraph: split before appending into current buffer.
+			if cur.Len() > 0 {
+				flush()
+			}
+			for start := 0; start < len(p); start += maxChars {
+				end := start + maxChars
+				if end > len(p) {
+					end = len(p)
+				}
+				out = append(out, strings.TrimSpace(p[start:end]))
+			}
+			continue
+		}
 		if cur.Len() == 0 {
 			cur.WriteString(p)
 			continue
@@ -98,18 +112,7 @@ func packParagraphs(paras []string, maxChars int) []string {
 			continue
 		}
 		flush()
-		if len(p) <= maxChars {
-			cur.WriteString(p)
-			continue
-		}
-		// Oversized paragraph: hard-split.
-		for start := 0; start < len(p); start += maxChars {
-			end := start + maxChars
-			if end > len(p) {
-				end = len(p)
-			}
-			out = append(out, strings.TrimSpace(p[start:end]))
-		}
+		cur.WriteString(p)
 	}
 	flush()
 	return out

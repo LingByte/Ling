@@ -17,6 +17,7 @@ const (
 	LLM_COZE      = "llm.coze"
 	LLM_OLLAMA    = "llm.ollama"
 	LLM_LMSTUDIO  = "llm.lmstudio"
+	LLM_ALIBABA   = "llm.alibaba"
 )
 
 const (
@@ -38,11 +39,12 @@ func (lp LLMProvider) ToString() string {
 }
 
 type LLMOptions struct {
-	ApiKey       string
-	BaseURL      string
-	SystemPrompt string
+	Provider        string
+	ApiKey          string
+	BaseURL         string
+	SystemPrompt    string
 	FewShotExamples []FewShotExample
-	logger       *zap.Logger
+	logger          *zap.Logger
 }
 
 type FewShotExample struct {
