@@ -129,10 +129,13 @@ type LLMDetails struct {
 // LLMHandler common llm hanlder interface
 type LLMHandler interface {
 	Query(text, model string) (string, error)
+
 	QueryWithOptions(text string, options *QueryOptions) (*QueryResponse, error)
+
 	QueryStream(text string, options *QueryOptions, callback func(segment string, isComplete bool) error) (*QueryResponse, error)
 
 	Provider() string
+
 	Interrupt()
 
 	ResetMemory()

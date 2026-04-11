@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/LingByte/Ling/pkg/chain"
-	"github.com/LingByte/Ling/pkg/censor"
 	"github.com/LingByte/Ling/pkg/compress"
 	"github.com/LingByte/Ling/pkg/expand"
 	"github.com/LingByte/Ling/pkg/knowledge"
@@ -41,7 +40,6 @@ func main() {
 		},
 	})
 	cmp, _ := compress.New(compress.ModeRule, nil)
-	cs, _ := censor.New(censor.ModeRule, &censor.FactoryOptions{KeywordDictPath: "pkg/censor/keyword_dict.txt"})
 
 	answerLLM := mustBuildLLM(ctx)
 
@@ -86,7 +84,6 @@ func main() {
 			},
 		},
 		chain.CompressStep{Compressor: cmp, Request: compress.CompressRequest{MaxChars: 1200, Separator: "\n\n"}},
-		chain.CensorStep{Censor: cs, Request: censor.AssessRequest{Mode: censor.ModeRule}},
 		chain.RouterStep{
 			StepName: "route_answer",
 			Select: func(ctx context.Context, st *chain.State) (string, error) {

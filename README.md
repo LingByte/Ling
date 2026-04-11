@@ -4,14 +4,14 @@
  
  # Ling
  
- Ling 是一个用 Go 构建的组件化 LLM/RAG 工具箱，提供可组合的流水线能力（censor / self-query / rewrite / expand / retrieval / compress / answer），并支持 MCP（Model Context Protocol）工具调用。
+ Ling 是一个用 Go 构建的组件化 LLM/RAG 工具箱，提供可组合的流水线能力（self-query / rewrite / expand / retrieval / compress / answer），并支持 MCP（Model Context Protocol）工具调用。
 
  ## 特性
  
  - **RAG 检索链路**
    支持向量检索、关键词检索与 hybrid 融合（`pkg/retrieval` + `pkg/knowledge`）
  - **组件化 Pipeline**
-   可按需串联：内容安全（`pkg/censor`）、查询扩展（`pkg/expand`）、查询重写（`pkg/rewrite`）、上下文压缩（`pkg/compress`）等
+   可按需串联：查询扩展（`pkg/expand`）、查询重写（`pkg/rewrite`）、上下文压缩（`pkg/compress`）等
  - **Self-Query（自查询）**
    从自然语言问题中抽取 `Query + Filters`，Filters 直接兼容 `knowledge.QueryOptions.Filters`（`pkg/selfquery`）
  - **MCP 客户端封装**
@@ -22,7 +22,7 @@
  - **`cmd/`**
    示例程序入口（`go run ./cmd/...`）
  - **`pkg/`**
-   可复用组件包：`llm` / `knowledge` / `retrieval` / `censor` / `expand` / `rewrite` / `compress` / `selfquery` / `mcp` 等
+   可复用组件包：`llm` / `knowledge` / `retrieval` / `expand` / `rewrite` / `compress` / `selfquery` / `mcp` 等
  - **`docs/`**
    文档与资源（含 `docs/logo.png`）
  

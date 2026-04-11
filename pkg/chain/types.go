@@ -23,8 +23,6 @@ type State struct {
 	Context   string
 	Answer    string
 
-	Blocked bool
-
 	// Per-step timings.
 	Timings map[string]time.Duration
 	// Arbitrary bag for custom fields.

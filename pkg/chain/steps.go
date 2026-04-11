@@ -2,10 +2,8 @@ package chain
 
 import (
 	"context"
-	"errors"
 	"strings"
 
-	"github.com/LingByte/Ling/pkg/censor"
 	"github.com/LingByte/Ling/pkg/compress"
 	"github.com/LingByte/Ling/pkg/expand"
 	"github.com/LingByte/Ling/pkg/knowledge"
@@ -123,40 +121,6 @@ func (s CompressStep) Run(ctx context.Context, st *State) error {
 	}
 	st.Context = strings.TrimSpace(resp.Compressed)
 	return nil
-}
-
-type CensorStep struct {
-	Censor censor.Censor
-	Request censor.AssessRequest
-	// If empty, default to censoring State.Query.
-	Target string
-}
-
-func (s CensorStep) Name() string { return "censor" }
-
-func (s CensorStep) Run(ctx context.Context, st *State) error {
-	if s.Censor == nil {
-		return nil
-	}
-	text := s.Target
-	if strings.TrimSpace(text) == "" {
-		text = st.Query
-	}
-	req := s.Request
-	req.Text = text
-	resp, err := s.Censor.Assess(ctx, req)
-	if resp != nil {
-		st.Meta["censor_action"] = resp.Action
-		st.Meta["censor_matches"] = resp.Matches
-		if resp.Redacted {
-			st.Meta["censor_processed"] = resp.Processed
-		}
-	}
-	if errors.Is(err, censor.ErrBlocked) {
-		st.Blocked = true
-		return ErrStop
-	}
-	return err
 }
 
 type AnswerStep struct {

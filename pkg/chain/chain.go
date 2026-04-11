@@ -85,16 +85,7 @@ func (c *Chain) Run(ctx context.Context, s *State) error {
 		if st == nil {
 			continue
 		}
-		step := st
-		p.Add(StepFunc{
-			StepName: step.Name(),
-			Fn: func(ctx context.Context, state *State) error {
-				if state.Blocked {
-					return ErrStop
-				}
-				return step.Run(ctx, state)
-			},
-		})
+		p.Add(st)
 	}
 	pipe := p.Build()
 

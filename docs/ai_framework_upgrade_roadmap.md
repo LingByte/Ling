@@ -13,7 +13,7 @@
 
 ## 当前优势（你已有的基础）
 
-- 有完整模块：`parser/chunk/extract/retrieval/knowledge/rewrite/expand/compress/censor/agent`。
+- 有完整模块：`parser/chunk/extract/retrieval/knowledge/rewrite/expand/compress/agent`。
 - 已有责任链能力：`pkg/chain` + 新增 `pkg/pipeline`（Step/Builder/Router/Retry）。
 - 已有多 LLM provider 入口与 RAG 主路径。
 - 有服务化入口与可视化管理页面雏形（`cmd/server`）。

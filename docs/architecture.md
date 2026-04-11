@@ -7,7 +7,7 @@ flowchart LR
   U[用户/调用方] -->|问题| App
 
   subgraph LingProj[Ling 项目]
-    Chain[Chain 流水线（censor/expand/compress/rewrite/answer）]
+    Chain[Chain 流水线（expand/compress/rewrite/answer）]
     Agent[Agent（plan + execute + evaluator）]
     LLM[LLM 适配层（pkg/llm）]
 
@@ -27,7 +27,6 @@ sequenceDiagram
   participant User as 用户
   participant API as 入口（cmd/server 或调用方）
   participant Chain as Chain 流水线（pkg/chain）
-  participant Censor as 内容安全（pkg/censor）
   participant Expand as 查询扩展（pkg/expand）
   participant Retrieve as 检索/RAG（pkg/retrieval + pkg/knowledge）
   participant Compress as 上下文压缩（pkg/compress）
@@ -36,9 +35,6 @@ sequenceDiagram
 
   User->>API: 输入问题 query
   API->>Chain: Run(query)
-
-  Chain->>Censor: 评估/脱敏/拦截（可选）
-  Censor-->>Chain: 允许/阻断 + 处理后的 query
 
   Chain->>Expand: 生成扩展查询（可选）
   Expand-->>Chain: expanded_query / sub_queries

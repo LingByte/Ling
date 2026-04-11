@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/LingByte/Ling/pkg/chain"
-	"github.com/LingByte/Ling/pkg/censor"
 	"github.com/LingByte/Ling/pkg/compress"
 	"github.com/LingByte/Ling/pkg/knowledge"
 	"github.com/LingByte/Ling/pkg/llm"
@@ -53,7 +52,6 @@ func main() {
 	}
 
 	cmp, _ := compress.New(compress.ModeRule, nil)
-	cs, _ := censor.New(censor.ModeRule, &censor.FactoryOptions{KeywordDictPath: "pkg/censor/keyword_dict.txt"})
 
 	ch := chain.New(
 		chain.StepFunc{StepName: "seed", Fn: func(ctx context.Context, s *chain.State) error {
@@ -62,7 +60,6 @@ func main() {
 			return nil
 		}},
 		chain.CompressStep{Compressor: cmp, Request: compress.CompressRequest{MaxChars: 1200, Separator: "\n\n"}},
-		chain.CensorStep{Censor: cs, Request: censor.AssessRequest{Mode: censor.ModeRule}, Target: ""},
 		chain.AnswerStep{LLM: h, Model: model},
 		chain.StepFunc{StepName: "print", Fn: func(ctx context.Context, s *chain.State) error {
 			_ = ctx
