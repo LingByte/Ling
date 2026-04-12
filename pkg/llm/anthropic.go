@@ -81,7 +81,7 @@ func (h *AnthropicHandler) QueryWithOptions(text string, options *QueryOptions) 
 		"temperature": options.Temperature,
 		"messages":    userMsgs,
 	}
-	if sys := h.mem.mergedSystemPrompt(h.systemPrompt); strings.TrimSpace(sys) != "" {
+	if sys := h.mem.mergedSystemPrompt(appendEmotionalStyle(h.systemPrompt, options)); strings.TrimSpace(sys) != "" {
 		reqBody["system"] = sys
 	}
 	raw, err := h.doAnthropic(reqCtx, reqBody)
@@ -151,7 +151,7 @@ func (h *AnthropicHandler) QueryStream(text string, options *QueryOptions, callb
 		"messages":    h.buildAnthropicMessages(text),
 		"stream":      true,
 	}
-	if sys := h.mem.mergedSystemPrompt(h.systemPrompt); strings.TrimSpace(sys) != "" {
+	if sys := h.mem.mergedSystemPrompt(appendEmotionalStyle(h.systemPrompt, options)); strings.TrimSpace(sys) != "" {
 		reqBody["system"] = sys
 	}
 	b, _ := json.Marshal(reqBody)

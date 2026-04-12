@@ -17,6 +17,7 @@
 //	SILICONFLOW_RERANK_URL / SILICONFLOW_RERANK_MODEL / SILICONFLOW_API_KEY  可选；不设则 Hybrid 不调用 rerank
 //	LING_KB_NAMESPACE       可选，知识库 namespace，默认 default
 //	LING_STRICT_RAG=1      可选：答案严格仅依据检索资料，找不到则「未找到相关信息」（默认关闭，允许资料无关时用模型常识/创作完成请求）
+//	LING_EMOTIONAL=1       可选：最终 Answer 调用 LLM 时开启略偏情感化、有温度的表达（见 pkg/llm QueryOptions.EmotionalTone）
 package main
 
 import (
@@ -162,12 +163,14 @@ func main() {
 				LLM:              handler,
 				Model:            model,
 				RelaxContextOnly: strings.TrimSpace(utils.GetEnv("LING_STRICT_RAG")) != "1",
+				EmotionalTone:    strings.TrimSpace(utils.GetEnv("LING_EMOTIONAL")) == "1",
 			},
 		)
 	} else {
 		steps = append(steps, chain.AnswerStep{
 			LLM:                  handler,
 			Model:                model,
+			EmotionalTone:        strings.TrimSpace(utils.GetEnv("LING_EMOTIONAL")) == "1",
 			AllowWithoutRetrieve: true,
 			BuildPrompt: func(st *chain.State) string {
 				return "你是助手。根据下面「重写后的检索式」理解用户意图，直接回答「用户原始问题」。\n\n" +

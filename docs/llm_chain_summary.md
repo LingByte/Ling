@@ -25,6 +25,8 @@
 
 `LLMOptions.Logger`（`*zap.Logger`）可选，用于异步摘要失败等日志。
 
+`QueryOptions.EmotionalTone`：为 true 时在 system/指令侧追加一段「略偏情感化、有温度」的中文风格说明（各 Provider 已接入）。`chain.AnswerStep.EmotionalTone` 会传给 `QueryWithOptions`；demo 用环境变量 `LING_EMOTIONAL=1` 开启。
+
 ---
 
 ## 2. Chain：是否已有链接能力？示例命令在哪？

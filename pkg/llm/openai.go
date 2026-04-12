@@ -366,10 +366,11 @@ func (oh *OpenaiHandler) QueryWithOptions(text string, options *QueryOptions) (*
 	}
 
 	sanitizedMessages := make([]openai.ChatCompletionMessage, 0)
-	if oh.systemPrompt != "" {
+	sysContent := appendEmotionalStyle(oh.systemPrompt, options)
+	if strings.TrimSpace(sysContent) != "" {
 		sanitizedMessages = append(sanitizedMessages, openai.ChatCompletionMessage{
 			Role:    openai.ChatMessageRoleSystem,
-			Content: oh.systemPrompt,
+			Content: sysContent,
 		})
 	}
 	if len(oh.fewShotExamples) > 0 {
@@ -592,8 +593,9 @@ func (oh *OpenaiHandler) QueryStream(text string, options *QueryOptions, callbac
 
 	requestID := GenerateLingRequestID()
 	messages := make([]openai.ChatCompletionMessage, 0)
-	if oh.systemPrompt != "" {
-		messages = append(messages, openai.ChatCompletionMessage{Role: openai.ChatMessageRoleSystem, Content: oh.systemPrompt})
+	sysContent := appendEmotionalStyle(oh.systemPrompt, options)
+	if strings.TrimSpace(sysContent) != "" {
+		messages = append(messages, openai.ChatCompletionMessage{Role: openai.ChatMessageRoleSystem, Content: sysContent})
 	}
 	if len(oh.fewShotExamples) > 0 {
 		for _, ex := range oh.fewShotExamples {

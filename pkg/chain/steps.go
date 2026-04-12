@@ -190,6 +190,8 @@ type AnswerStep struct {
 	// insufficient for the question (e.g. creative tasks while KB holds unrelated docs).
 	// When false (default), keeps strict "only context / else 未找到相关信息" behavior.
 	RelaxContextOnly bool
+	// EmotionalTone is passed to llm.QueryOptions so the provider can append a warmer style instruction.
+	EmotionalTone bool
 }
 
 func (s AnswerStep) Name() string { return "answer" }
@@ -233,10 +235,17 @@ func (s AnswerStep) Run(ctx context.Context, st *State) error {
 	if model == "" {
 		model = "gpt-4o-mini"
 	}
-	out, err := s.LLM.Query(prompt, model)
+	resp, err := s.LLM.QueryWithOptions(prompt, &llm.QueryOptions{
+		Model:         model,
+		EmotionalTone: s.EmotionalTone,
+	})
 	if err != nil {
 		return err
 	}
-	st.Answer = strings.TrimSpace(out)
+	if resp == nil || len(resp.Choices) == 0 {
+		st.Answer = ""
+		return nil
+	}
+	st.Answer = strings.TrimSpace(resp.Choices[0].Content)
 	return nil
 }

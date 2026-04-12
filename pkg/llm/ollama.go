@@ -77,7 +77,7 @@ func (h *OllamaHandler) QueryWithOptions(text string, options *QueryOptions) (*Q
 		}
 	}()
 
-	msgs := h.mem.buildChatCompletionMessages(h.systemPrompt, text)
+	msgs := h.mem.buildChatCompletionMessages(appendEmotionalStyle(h.systemPrompt, options), text)
 	body := map[string]any{
 		"model":       model,
 		"messages":    msgs,
@@ -143,7 +143,7 @@ func (h *OllamaHandler) QueryStream(text string, options *QueryOptions, callback
 		}
 	}()
 
-	msgs := h.mem.buildChatCompletionMessages(h.systemPrompt, text)
+	msgs := h.mem.buildChatCompletionMessages(appendEmotionalStyle(h.systemPrompt, options), text)
 	body := map[string]any{
 		"model":       model,
 		"messages":    msgs,

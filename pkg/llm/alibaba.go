@@ -88,7 +88,7 @@ func (h *AlibabaHandler) QueryWithOptions(text string, options *QueryOptions) (*
 	model := strings.TrimSpace(options.Model)
 	reqBody := map[string]any{
 		"input": map[string]string{
-			"prompt": h.composePrompt(text),
+			"prompt": h.composePrompt(text, options),
 		},
 		"parameters": map[string]any{},
 	}
@@ -180,10 +180,10 @@ func (h *AlibabaHandler) GetMaxMemoryMessages() int {
 	return h.mem.getMaxMemoryMessages()
 }
 
-func (h *AlibabaHandler) composePrompt(currentUser string) string {
+func (h *AlibabaHandler) composePrompt(currentUser string, opts *QueryOptions) string {
 	currentUser = strings.TrimSpace(currentUser)
 	var b strings.Builder
-	if s := strings.TrimSpace(h.systemPrompt); s != "" {
+	if s := appendEmotionalStyle(strings.TrimSpace(h.systemPrompt), opts); s != "" {
 		b.WriteString(s)
 		b.WriteString("\n\n")
 	}

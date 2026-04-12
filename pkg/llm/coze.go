@@ -77,7 +77,7 @@ func (h *CozeHandler) QueryWithOptions(text string, options *QueryOptions) (*Que
 		options = &QueryOptions{}
 	}
 	model := strings.TrimSpace(options.Model)
-	msgs := h.cozeMessagesForChat(text)
+	msgs := h.cozeMessagesForChat(text, options)
 	streamFlag := false
 	req := &coze.CreateChatsReq{
 		BotID:    h.botID,
@@ -127,7 +127,7 @@ func (h *CozeHandler) QueryStream(text string, options *QueryOptions, callback f
 		options = &QueryOptions{}
 	}
 	model := strings.TrimSpace(options.Model)
-	msgs := h.cozeMessagesForChat(text)
+	msgs := h.cozeMessagesForChat(text, options)
 	streamFlag := true
 	req := &coze.CreateChatsReq{
 		BotID:    h.botID,
@@ -218,10 +218,13 @@ func (h *CozeHandler) GetMaxMemoryMessages() int {
 	return h.mem.getMaxMemoryMessages()
 }
 
-func (h *CozeHandler) cozeMessagesForChat(userText string) []coze.Message {
+func (h *CozeHandler) cozeMessagesForChat(userText string, opts *QueryOptions) []coze.Message {
 	out := make([]coze.Message, 0, 8)
-	if strings.TrimSpace(h.systemPrompt) != "" {
-		out = append(out, coze.Message{Role: coze.MessageRoleUser, Content: "System: " + strings.TrimSpace(h.systemPrompt)})
+	sysCore := strings.TrimSpace(h.systemPrompt)
+	if sysCore != "" {
+		out = append(out, coze.Message{Role: coze.MessageRoleUser, Content: "System: " + appendEmotionalStyle(sysCore, opts)})
+	} else if emotionalToneEnabled(opts) {
+		out = append(out, coze.Message{Role: coze.MessageRoleUser, Content: "System: " + appendEmotionalStyle("", opts)})
 	}
 	if sum := h.mem.summaryText(); sum != "" {
 		out = append(out, coze.Message{Role: coze.MessageRoleUser, Content: "Conversation summary so far: " + sum})

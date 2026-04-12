@@ -78,7 +78,7 @@ func (h *LMStudioHandler) QueryWithOptions(text string, options *QueryOptions) (
 	}()
 	body := map[string]any{
 		"model":       model,
-		"messages":    h.mem.buildChatCompletionMessages(h.systemPrompt, text),
+		"messages":    h.mem.buildChatCompletionMessages(appendEmotionalStyle(h.systemPrompt, options), text),
 		"stream":      false,
 		"temperature": options.Temperature,
 	}
@@ -142,7 +142,7 @@ func (h *LMStudioHandler) QueryStream(text string, options *QueryOptions, callba
 	}()
 	body := map[string]any{
 		"model":       model,
-		"messages":    h.mem.buildChatCompletionMessages(h.systemPrompt, text),
+		"messages":    h.mem.buildChatCompletionMessages(appendEmotionalStyle(h.systemPrompt, options), text),
 		"stream":      true,
 		"temperature": options.Temperature,
 	}

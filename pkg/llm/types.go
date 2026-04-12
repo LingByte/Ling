@@ -63,7 +63,9 @@ type QueryOptions struct {
 	FilterEmoji      bool
 	EnableJSONOutput bool
 	OutputFormat     string
-	logger           *zap.Logger
+	// EmotionalTone, when true, appends a short instruction so replies read warmer and more human (still factual).
+	EmotionalTone bool
+	logger          *zap.Logger
 }
 
 type TokenUsage struct {
