@@ -10,20 +10,19 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 type LMStudioHandler struct {
-	ctx               context.Context
-	baseURL           string
-	apiKey            string
-	systemPrompt      string
-	mutex             sync.Mutex
-	messages          []llmMemoryMessage
-	maxMemoryMessages int
-	interruptCh       chan struct{}
-	client            *http.Client
+	ctx          context.Context
+	baseURL      string
+	apiKey       string
+	systemPrompt string
+	mem          *asyncTurnMemory
+	interruptCh  chan struct{}
+	client       *http.Client
 }
 
 func NewLMStudioHandler(ctx context.Context, llmOptions *LLMOptions) (*LMStudioHandler, error) {
@@ -34,15 +33,18 @@ func NewLMStudioHandler(ctx context.Context, llmOptions *LLMOptions) (*LMStudioH
 	if strings.TrimSpace(opts.ApiKey) == "" {
 		opts.ApiKey = "lmstudio"
 	}
+	log := zap.NewNop()
+	if llmOptions != nil && llmOptions.Logger != nil {
+		log = llmOptions.Logger
+	}
 	return &LMStudioHandler{
-		ctx:               ctx,
-		baseURL:           strings.TrimRight(strings.TrimSpace(opts.BaseURL), "/"),
-		apiKey:            strings.TrimSpace(opts.ApiKey),
-		systemPrompt:      opts.SystemPrompt,
-		messages:          make([]llmMemoryMessage, 0),
-		maxMemoryMessages: defaultMaxMemoryMessages,
-		interruptCh:       make(chan struct{}, 1),
-		client:            &http.Client{Timeout: 60 * time.Second},
+		ctx:          ctx,
+		baseURL:      strings.TrimRight(strings.TrimSpace(opts.BaseURL), "/"),
+		apiKey:       strings.TrimSpace(opts.ApiKey),
+		systemPrompt: opts.SystemPrompt,
+		mem:          newAsyncTurnMemory(ctx, log),
+		interruptCh:  make(chan struct{}, 1),
+		client:       &http.Client{Timeout: 60 * time.Second},
 	}, nil
 }
 
@@ -76,7 +78,7 @@ func (h *LMStudioHandler) QueryWithOptions(text string, options *QueryOptions) (
 	}()
 	body := map[string]any{
 		"model":       model,
-		"messages":    h.buildMessages(text),
+		"messages":    h.mem.buildChatCompletionMessages(h.systemPrompt, text),
 		"stream":      false,
 		"temperature": options.Temperature,
 	}
@@ -108,7 +110,7 @@ func (h *LMStudioHandler) QueryWithOptions(text string, options *QueryOptions) (
 			reason = parsed.Choices[0].FinishReason
 		}
 	}
-	h.appendTurn(text, content)
+	h.mem.appendPairAndMaybeSummarize(reqCtx, model, text, content, h.summarizeConversation)
 	return &QueryResponse{
 		Provider: h.Provider(),
 		Model:    model,
@@ -140,7 +142,7 @@ func (h *LMStudioHandler) QueryStream(text string, options *QueryOptions, callba
 	}()
 	body := map[string]any{
 		"model":       model,
-		"messages":    h.buildMessages(text),
+		"messages":    h.mem.buildChatCompletionMessages(h.systemPrompt, text),
 		"stream":      true,
 		"temperature": options.Temperature,
 	}
@@ -204,7 +206,7 @@ func (h *LMStudioHandler) QueryStream(text string, options *QueryOptions, callba
 		}
 	}
 	content := strings.TrimSpace(out.String())
-	h.appendTurn(text, content)
+	h.mem.appendPairAndMaybeSummarize(reqCtx, model, text, content, h.summarizeConversation)
 	return &QueryResponse{
 		Provider: h.Provider(),
 		Model:    model,
@@ -222,61 +224,68 @@ func (h *LMStudioHandler) Interrupt() {
 }
 
 func (h *LMStudioHandler) ResetMemory() {
-	h.mutex.Lock()
-	h.messages = h.messages[:0]
-	h.mutex.Unlock()
+	if h.mem != nil {
+		h.mem.reset()
+	}
 }
 
 func (h *LMStudioHandler) SummarizeMemory(model string) (string, error) {
-	_ = model
-	h.mutex.Lock()
-	defer h.mutex.Unlock()
-	var b strings.Builder
-	for _, m := range h.messages {
-		b.WriteString(m.Role + ": " + m.Content + "\n")
+	if h.mem == nil {
+		return "", nil
 	}
-	return strings.TrimSpace(b.String()), nil
+	if strings.TrimSpace(model) == "" {
+		model = "local-model"
+	}
+	return h.mem.summarizeMemorySync(h.ctx, model, h.summarizeConversation)
 }
 
 func (h *LMStudioHandler) SetMaxMemoryMessages(n int) {
-	if n <= 0 {
-		n = defaultMaxMemoryMessages
+	if h.mem != nil {
+		h.mem.setMaxMemoryMessages(n)
 	}
-	h.mutex.Lock()
-	h.maxMemoryMessages = n
-	if len(h.messages) > n {
-		h.messages = h.messages[len(h.messages)-n:]
-	}
-	h.mutex.Unlock()
 }
 
 func (h *LMStudioHandler) GetMaxMemoryMessages() int {
-	h.mutex.Lock()
-	defer h.mutex.Unlock()
-	return h.maxMemoryMessages
+	if h.mem == nil {
+		return defaultMaxMemoryMessages
+	}
+	return h.mem.getMaxMemoryMessages()
 }
 
-func (h *LMStudioHandler) buildMessages(userText string) []map[string]string {
-	h.mutex.Lock()
-	defer h.mutex.Unlock()
-	msgs := make([]map[string]string, 0, len(h.messages)+2)
-	if strings.TrimSpace(h.systemPrompt) != "" {
-		msgs = append(msgs, map[string]string{"role": "system", "content": h.systemPrompt})
+func (h *LMStudioHandler) summarizeConversation(ctx context.Context, model string, transcript string, previousSummary string) (string, error) {
+	system := "You are a conversation summarizer. Produce a concise, factual summary of the conversation so far. Preserve user preferences, facts, decisions, and open TODOs. Do not include any markdown."
+	user := ""
+	if strings.TrimSpace(previousSummary) != "" {
+		user += "Existing summary:\n" + previousSummary + "\n\n"
 	}
-	for _, m := range h.messages {
-		msgs = append(msgs, map[string]string{"role": m.Role, "content": m.Content})
+	user += "Conversation transcript:\n" + transcript + "\n\nReturn an updated summary in plain text."
+	body := map[string]any{
+		"model": model,
+		"messages": []map[string]string{
+			{"role": "system", "content": system},
+			{"role": "user", "content": user},
+		},
+		"stream":      false,
+		"temperature": 0,
 	}
-	msgs = append(msgs, map[string]string{"role": "user", "content": userText})
-	return msgs
-}
-
-func (h *LMStudioHandler) appendTurn(userText, assistantText string) {
-	h.mutex.Lock()
-	defer h.mutex.Unlock()
-	h.messages = append(h.messages, llmMemoryMessage{Role: "user", Content: userText}, llmMemoryMessage{Role: "assistant", Content: assistantText})
-	if len(h.messages) > h.maxMemoryMessages {
-		h.messages = h.messages[len(h.messages)-h.maxMemoryMessages:]
+	raw, err := h.doChatCompletion(ctx, body)
+	if err != nil {
+		return "", err
 	}
+	var parsed struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return "", err
+	}
+	if len(parsed.Choices) == 0 {
+		return "", nil
+	}
+	return strings.TrimSpace(parsed.Choices[0].Message.Content), nil
 }
 
 

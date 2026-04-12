@@ -10,6 +10,7 @@ require (
 	github.com/jung-kurt/gofpdf v1.16.2
 	github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728
 	github.com/mark3labs/mcp-go v0.43.2
+	github.com/natefinch/lumberjack v2.0.0+incompatible
 	github.com/otiai10/gosseract/v2 v2.4.1
 	github.com/sashabaranov/go-openai v1.41.2
 	github.com/sirupsen/logrus v1.9.4
@@ -23,6 +24,7 @@ require (
 )
 
 require (
+	github.com/BurntSushi/toml v1.6.0 // indirect
 	github.com/RoaringBitmap/roaring/v2 v2.4.5 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/bits-and-blooms/bitset v1.22.0 // indirect
@@ -94,4 +96,6 @@ require (
 	golang.org/x/sys v0.41.0 // indirect
 	golang.org/x/text v0.34.0 // indirect
 	google.golang.org/protobuf v1.36.10 // indirect
+	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
+	gopkg.in/yaml.v2 v2.4.0 // indirect
 )

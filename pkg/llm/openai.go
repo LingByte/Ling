@@ -72,8 +72,9 @@ func NewOpenaiHandler(ctx context.Context, llmOptions *LLMOptions) (*OpenaiHandl
 	if llmOptions == nil {
 		return nil, errors.New("options cannot be nil")
 	}
-	if llmOptions.logger == nil {
-		llmOptions.logger = zap.NewNop()
+	log := llmOptions.Logger
+	if log == nil {
+		log = zap.NewNop()
 	}
 	config := openai.DefaultConfig(llmOptions.ApiKey)
 	config.BaseURL = llmOptions.BaseURL
@@ -85,7 +86,7 @@ func NewOpenaiHandler(ctx context.Context, llmOptions *LLMOptions) (*OpenaiHandl
 		baseUrl:           llmOptions.BaseURL,
 		systemPrompt:      llmOptions.SystemPrompt,
 		fewShotExamples:   llmOptions.FewShotExamples,
-		logger:            llmOptions.logger,
+		logger:            log,
 		messages:          make([]openai.ChatCompletionMessage, 0),
 		maxMemoryMessages: defaultMaxMemoryMessages,
 	}, nil

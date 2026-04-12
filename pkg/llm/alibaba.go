@@ -11,23 +11,20 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
-	"github.com/sashabaranov/go-openai"
+	"go.uber.org/zap"
 )
 
 type AlibabaHandler struct {
-	ctx               context.Context
-	apiKey            string
-	appID             string
-	endpoint          string
-	systemPrompt      string
-	client            *http.Client
-	mutex             sync.Mutex
-	messages          []openai.ChatCompletionMessage
-	maxMemoryMessages int
-	interruptCh       chan struct{}
+	ctx          context.Context
+	apiKey       string
+	appID        string
+	endpoint     string
+	systemPrompt string
+	client       *http.Client
+	mem          *asyncTurnMemory
+	interruptCh  chan struct{}
 }
 
 func NewAlibabaHandler(ctx context.Context, llmOptions *LLMOptions) (*AlibabaHandler, error) {
@@ -52,16 +49,19 @@ func NewAlibabaHandler(ctx context.Context, llmOptions *LLMOptions) (*AlibabaHan
 	if appID == "" {
 		return nil, errors.New("alibaba app id is required (set LLM BaseURL as app id or ALIBABA_APP_ID)")
 	}
+	log := zap.NewNop()
+	if llmOptions != nil && llmOptions.Logger != nil {
+		log = llmOptions.Logger
+	}
 	return &AlibabaHandler{
-		ctx:               ctx,
-		apiKey:            strings.TrimSpace(opts.ApiKey),
-		appID:             appID,
-		endpoint:          endpoint,
-		systemPrompt:      opts.SystemPrompt,
-		client:            &http.Client{Timeout: timeout},
-		messages:          make([]openai.ChatCompletionMessage, 0),
-		maxMemoryMessages: defaultMaxMemoryMessages,
-		interruptCh:       make(chan struct{}, 1),
+		ctx:          ctx,
+		apiKey:       strings.TrimSpace(opts.ApiKey),
+		appID:        appID,
+		endpoint:     endpoint,
+		systemPrompt: opts.SystemPrompt,
+		client:       &http.Client{Timeout: timeout},
+		mem:          newAsyncTurnMemory(ctx, log),
+		interruptCh:  make(chan struct{}, 1),
 	}, nil
 }
 
@@ -85,7 +85,7 @@ func (h *AlibabaHandler) QueryWithOptions(text string, options *QueryOptions) (*
 		return nil, errors.New("interrupted")
 	default:
 	}
-	h.appendMessage(openai.ChatCompletionMessage{Role: openai.ChatMessageRoleUser, Content: text})
+	model := strings.TrimSpace(options.Model)
 	reqBody := map[string]any{
 		"input": map[string]string{
 			"prompt": h.composePrompt(text),
@@ -121,7 +121,7 @@ func (h *AlibabaHandler) QueryWithOptions(text string, options *QueryOptions) (*
 		return nil, err
 	}
 	answer := strings.TrimSpace(parsed.Output.Text)
-	h.appendMessage(openai.ChatCompletionMessage{Role: openai.ChatMessageRoleAssistant, Content: answer})
+	h.mem.appendPairAndMaybeSummarize(h.ctx, model, text, answer, h.summarizeAlibaba)
 	return &QueryResponse{
 		Provider: h.Provider(),
 		Model:    options.Model,
@@ -155,59 +155,104 @@ func (h *AlibabaHandler) Interrupt() {
 }
 
 func (h *AlibabaHandler) ResetMemory() {
-	h.mutex.Lock()
-	h.messages = h.messages[:0]
-	h.mutex.Unlock()
+	if h.mem != nil {
+		h.mem.reset()
+	}
 }
 
 func (h *AlibabaHandler) SummarizeMemory(model string) (string, error) {
-	_ = model
-	h.mutex.Lock()
-	defer h.mutex.Unlock()
-	if len(h.messages) == 0 {
+	if h.mem == nil {
 		return "", nil
 	}
-	var b strings.Builder
-	for _, m := range h.messages {
-		b.WriteString(m.Role)
-		b.WriteString(": ")
-		b.WriteString(m.Content)
-		b.WriteString("\n")
-	}
-	return strings.TrimSpace(b.String()), nil
+	return h.mem.summarizeMemorySync(h.ctx, strings.TrimSpace(model), h.summarizeAlibaba)
 }
 
 func (h *AlibabaHandler) SetMaxMemoryMessages(n int) {
-	if n <= 0 {
-		n = defaultMaxMemoryMessages
+	if h.mem != nil {
+		h.mem.setMaxMemoryMessages(n)
 	}
-	h.mutex.Lock()
-	h.maxMemoryMessages = n
-	if len(h.messages) > n {
-		h.messages = h.messages[len(h.messages)-n:]
-	}
-	h.mutex.Unlock()
 }
 
 func (h *AlibabaHandler) GetMaxMemoryMessages() int {
-	h.mutex.Lock()
-	defer h.mutex.Unlock()
-	return h.maxMemoryMessages
+	if h.mem == nil {
+		return defaultMaxMemoryMessages
+	}
+	return h.mem.getMaxMemoryMessages()
 }
 
-func (h *AlibabaHandler) appendMessage(m openai.ChatCompletionMessage) {
-	h.mutex.Lock()
-	defer h.mutex.Unlock()
-	h.messages = append(h.messages, m)
-	if len(h.messages) > h.maxMemoryMessages {
-		h.messages = h.messages[len(h.messages)-h.maxMemoryMessages:]
+func (h *AlibabaHandler) composePrompt(currentUser string) string {
+	currentUser = strings.TrimSpace(currentUser)
+	var b strings.Builder
+	if s := strings.TrimSpace(h.systemPrompt); s != "" {
+		b.WriteString(s)
+		b.WriteString("\n\n")
 	}
+	if sum := h.mem.summaryText(); sum != "" {
+		b.WriteString("Conversation summary so far: ")
+		b.WriteString(sum)
+		b.WriteString("\n\n")
+	}
+	for _, t := range h.mem.snapshotTurns() {
+		b.WriteString(t.Role)
+		b.WriteString(": ")
+		b.WriteString(t.Content)
+		b.WriteString("\n")
+	}
+	if b.Len() > 0 {
+		b.WriteString("\n")
+	}
+	b.WriteString("用户输入：")
+	b.WriteString(currentUser)
+	out := strings.TrimSpace(b.String())
+	if out == "" {
+		return currentUser
+	}
+	return out
 }
 
-func (h *AlibabaHandler) composePrompt(userText string) string {
-	if strings.TrimSpace(h.systemPrompt) == "" {
-		return strings.TrimSpace(userText)
+func (h *AlibabaHandler) summarizeAlibaba(ctx context.Context, model string, transcript string, previousSummary string) (string, error) {
+	_ = model
+	system := "You are a conversation summarizer. Produce a concise, factual summary of the conversation so far. Preserve user preferences, facts, decisions, and open TODOs. Do not include any markdown."
+	user := ""
+	if strings.TrimSpace(previousSummary) != "" {
+		user += "Existing summary:\n" + previousSummary + "\n\n"
 	}
-	return h.systemPrompt + "\n\n用户输入：" + strings.TrimSpace(userText)
+	user += "Conversation transcript:\n" + transcript + "\n\nReturn an updated summary in plain text."
+	prompt := system + "\n\n" + user
+	reqBody := map[string]any{
+		"input": map[string]string{
+			"prompt": prompt,
+		},
+		"parameters": map[string]any{},
+	}
+	b, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", err
+	}
+	url := fmt.Sprintf("%s/api/v1/apps/%s/completion", strings.TrimRight(h.endpoint, "/"), h.appID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(b))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+h.apiKey)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := h.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("alibaba summarize failed: status=%d body=%s", resp.StatusCode, string(body))
+	}
+	var parsed struct {
+		Output struct {
+			Text string `json:"text"`
+		} `json:"output"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(parsed.Output.Text), nil
 }
 

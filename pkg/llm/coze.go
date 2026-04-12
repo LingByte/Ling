@@ -6,22 +6,20 @@ import (
 	"errors"
 	"io"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/coze-dev/coze-go"
+	"go.uber.org/zap"
 )
 
 type CozeHandler struct {
-	client            coze.CozeAPI
-	ctx               context.Context
-	botID             string
-	userID            string
-	systemPrompt      string
-	mutex             sync.Mutex
-	messages          []coze.Message
-	maxMemoryMessages int
-	interruptCh       chan struct{}
+	client       coze.CozeAPI
+	ctx          context.Context
+	botID        string
+	userID       string
+	systemPrompt string
+	mem          *asyncTurnMemory
+	interruptCh  chan struct{}
 }
 
 func NewCozeHandler(ctx context.Context, llmOptions *LLMOptions) (*CozeHandler, error) {
@@ -48,15 +46,18 @@ func NewCozeHandler(ctx context.Context, llmOptions *LLMOptions) (*CozeHandler, 
 	if strings.TrimSpace(cfg.BaseURL) != "" {
 		client = coze.NewCozeAPI(authClient, coze.WithBaseURL(strings.TrimSpace(cfg.BaseURL)))
 	}
+	log := zap.NewNop()
+	if llmOptions != nil && llmOptions.Logger != nil {
+		log = llmOptions.Logger
+	}
 	return &CozeHandler{
-		client:            client,
-		ctx:               ctx,
-		botID:             cfg.BotID,
-		userID:            cfg.UserID,
-		systemPrompt:      opts.SystemPrompt,
-		messages:          make([]coze.Message, 0),
-		maxMemoryMessages: defaultMaxMemoryMessages,
-		interruptCh:       make(chan struct{}, 1),
+		client:       client,
+		ctx:          ctx,
+		botID:        cfg.BotID,
+		userID:       cfg.UserID,
+		systemPrompt: opts.SystemPrompt,
+		mem:          newAsyncTurnMemory(ctx, log),
+		interruptCh:  make(chan struct{}, 1),
 	}, nil
 }
 
@@ -75,8 +76,8 @@ func (h *CozeHandler) QueryWithOptions(text string, options *QueryOptions) (*Que
 	if options == nil {
 		options = &QueryOptions{}
 	}
-	h.appendMessage(coze.Message{Role: "user", Content: text})
-	msgs := h.snapshotMessages()
+	model := strings.TrimSpace(options.Model)
+	msgs := h.cozeMessagesForChat(text)
 	streamFlag := false
 	req := &coze.CreateChatsReq{
 		BotID:    h.botID,
@@ -113,7 +114,7 @@ func (h *CozeHandler) QueryWithOptions(text string, options *QueryOptions) (*Que
 		}
 	}
 	answer := strings.TrimSpace(out.String())
-	h.appendMessage(coze.Message{Role: "assistant", Content: answer})
+	h.mem.appendPairAndMaybeSummarize(ctx, model, text, answer, h.summarizeCoze)
 	return &QueryResponse{
 		Provider: h.Provider(),
 		Model:    options.Model,
@@ -125,8 +126,8 @@ func (h *CozeHandler) QueryStream(text string, options *QueryOptions, callback f
 	if options == nil {
 		options = &QueryOptions{}
 	}
-	h.appendMessage(coze.Message{Role: "user", Content: text})
-	msgs := h.snapshotMessages()
+	model := strings.TrimSpace(options.Model)
+	msgs := h.cozeMessagesForChat(text)
 	streamFlag := true
 	req := &coze.CreateChatsReq{
 		BotID:    h.botID,
@@ -174,7 +175,7 @@ func (h *CozeHandler) QueryStream(text string, options *QueryOptions, callback f
 		}
 	}
 	answer := strings.TrimSpace(out.String())
-	h.appendMessage(coze.Message{Role: "assistant", Content: answer})
+	h.mem.appendPairAndMaybeSummarize(ctx, model, text, answer, h.summarizeCoze)
 	return &QueryResponse{
 		Provider: h.Provider(),
 		Model:    options.Model,
@@ -192,64 +193,90 @@ func (h *CozeHandler) Interrupt() {
 }
 
 func (h *CozeHandler) ResetMemory() {
-	h.mutex.Lock()
-	h.messages = h.messages[:0]
-	h.mutex.Unlock()
+	if h.mem != nil {
+		h.mem.reset()
+	}
 }
 
 func (h *CozeHandler) SummarizeMemory(model string) (string, error) {
-	_ = model
-	h.mutex.Lock()
-	defer h.mutex.Unlock()
-	if len(h.messages) == 0 {
+	if h.mem == nil {
 		return "", nil
 	}
-	var b strings.Builder
-	for _, m := range h.messages {
-		b.WriteString(string(m.Role))
-		b.WriteString(": ")
-		b.WriteString(m.Content)
-		b.WriteString("\n")
-	}
-	return strings.TrimSpace(b.String()), nil
+	return h.mem.summarizeMemorySync(h.ctx, strings.TrimSpace(model), h.summarizeCoze)
 }
 
 func (h *CozeHandler) SetMaxMemoryMessages(n int) {
-	if n <= 0 {
-		n = defaultMaxMemoryMessages
+	if h.mem != nil {
+		h.mem.setMaxMemoryMessages(n)
 	}
-	h.mutex.Lock()
-	h.maxMemoryMessages = n
-	if len(h.messages) > n {
-		h.messages = h.messages[len(h.messages)-n:]
-	}
-	h.mutex.Unlock()
 }
 
 func (h *CozeHandler) GetMaxMemoryMessages() int {
-	h.mutex.Lock()
-	defer h.mutex.Unlock()
-	return h.maxMemoryMessages
-}
-
-func (h *CozeHandler) appendMessage(m coze.Message) {
-	h.mutex.Lock()
-	defer h.mutex.Unlock()
-	h.messages = append(h.messages, m)
-	if len(h.messages) > h.maxMemoryMessages {
-		h.messages = h.messages[len(h.messages)-h.maxMemoryMessages:]
+	if h.mem == nil {
+		return defaultMaxMemoryMessages
 	}
+	return h.mem.getMaxMemoryMessages()
 }
 
-func (h *CozeHandler) snapshotMessages() []coze.Message {
-	h.mutex.Lock()
-	defer h.mutex.Unlock()
-	out := make([]coze.Message, 0, len(h.messages)+1)
+func (h *CozeHandler) cozeMessagesForChat(userText string) []coze.Message {
+	out := make([]coze.Message, 0, 8)
 	if strings.TrimSpace(h.systemPrompt) != "" {
-		out = append(out, coze.Message{Role: "user", Content: "System: " + h.systemPrompt})
+		out = append(out, coze.Message{Role: coze.MessageRoleUser, Content: "System: " + strings.TrimSpace(h.systemPrompt)})
 	}
-	out = append(out, h.messages...)
+	if sum := h.mem.summaryText(); sum != "" {
+		out = append(out, coze.Message{Role: coze.MessageRoleUser, Content: "Conversation summary so far: " + sum})
+	}
+	for _, t := range h.mem.snapshotTurns() {
+		role := coze.MessageRoleUser
+		if t.Role == "assistant" {
+			role = coze.MessageRoleAssistant
+		}
+		out = append(out, coze.Message{Role: role, Content: t.Content})
+	}
+	out = append(out, coze.Message{Role: coze.MessageRoleUser, Content: userText})
 	return out
+}
+
+func (h *CozeHandler) summarizeCoze(ctx context.Context, model string, transcript string, previousSummary string) (string, error) {
+	_ = model
+	prompt := "You are a conversation summarizer. Produce a concise, factual summary of the conversation so far. Preserve user preferences, facts, decisions, and open TODOs. Do not include any markdown.\n\n"
+	if strings.TrimSpace(previousSummary) != "" {
+		prompt += "Existing summary:\n" + previousSummary + "\n\n"
+	}
+	prompt += "Conversation transcript:\n" + transcript + "\n\nReturn an updated summary in plain text."
+	streamFlag := false
+	req := &coze.CreateChatsReq{
+		BotID:  h.botID,
+		UserID: h.userID + "_ling_mem",
+		Messages: []*coze.Message{
+			{Role: coze.MessageRoleUser, Content: prompt},
+		},
+		Stream: &streamFlag,
+	}
+	sctx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	defer cancel()
+	stream, err := h.client.Chat.Stream(sctx, req)
+	if err != nil {
+		return "", err
+	}
+	defer stream.Close()
+	var out strings.Builder
+	for {
+		ev, err := stream.Recv()
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return "", err
+		}
+		if ev.Message != nil && ev.Message.Content != "" {
+			out.WriteString(ev.Message.Content)
+		}
+		if ev.IsDone() || ev.Event == coze.ChatEventConversationMessageCompleted {
+			break
+		}
+	}
+	return strings.TrimSpace(out.String()), nil
 }
 
 func toCozePtrs(in []coze.Message) []*coze.Message {
@@ -260,4 +287,3 @@ func toCozePtrs(in []coze.Message) []*coze.Message {
 	}
 	return out
 }
-

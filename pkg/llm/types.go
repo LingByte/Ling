@@ -44,7 +44,8 @@ type LLMOptions struct {
 	BaseURL         string
 	SystemPrompt    string
 	FewShotExamples []FewShotExample
-	logger          *zap.Logger
+	// Logger is optional; used for async memory summarization warnings and diagnostics.
+	Logger *zap.Logger
 }
 
 type FewShotExample struct {

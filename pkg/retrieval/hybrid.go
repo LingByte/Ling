@@ -222,8 +222,8 @@ func (h *HybridHandler) QueryHybrid(ctx context.Context, query string, options *
 
 	// Derive structured constraints from query (rule-based): year tags + metadata filters.
 	derived := deriveQueryConstraints(query)
-	vectorFilters := mergeQdrantFilters(nil, options.Filters)
-	vectorFilters = mergeQdrantFilters(vectorFilters, derived.QdrantFilter)
+	vectorFilters := MergeQdrantFilters(nil, options.Filters)
+	vectorFilters = MergeQdrantFilters(vectorFilters, derived.QdrantFilter)
 
 	kwReq := search.SearchRequest{Keyword: query, SearchFields: h.defaultFields, Size: keywordTopK, Highlight: true}
 	if len(derived.TagShould) > 0 {
@@ -607,7 +607,8 @@ func deriveDocTypeFromQuery(q string) string {
 	}
 }
 
-func mergeQdrantFilters(a map[string]any, b map[string]any) map[string]any {
+// MergeQdrantFilters merges two Qdrant filter objects (shallow combine via must when both set).
+func MergeQdrantFilters(a map[string]any, b map[string]any) map[string]any {
 	if a == nil {
 		a = map[string]any{}
 	}

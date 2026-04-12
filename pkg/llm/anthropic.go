@@ -10,20 +10,19 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 type AnthropicHandler struct {
-	ctx               context.Context
-	baseURL           string
-	apiKey            string
-	systemPrompt      string
-	mutex             sync.Mutex
-	messages          []llmMemoryMessage
-	maxMemoryMessages int
-	interruptCh       chan struct{}
-	client            *http.Client
+	ctx          context.Context
+	baseURL      string
+	apiKey       string
+	systemPrompt string
+	mem          *asyncTurnMemory
+	interruptCh  chan struct{}
+	client       *http.Client
 }
 
 func NewAnthropicHandler(ctx context.Context, llmOptions *LLMOptions) (*AnthropicHandler, error) {
@@ -31,15 +30,18 @@ func NewAnthropicHandler(ctx context.Context, llmOptions *LLMOptions) (*Anthropi
 	if strings.TrimSpace(opts.BaseURL) == "" {
 		opts.BaseURL = "https://api.anthropic.com/v1"
 	}
+	log := zap.NewNop()
+	if llmOptions != nil && llmOptions.Logger != nil {
+		log = llmOptions.Logger
+	}
 	return &AnthropicHandler{
-		ctx:               ctx,
-		baseURL:           strings.TrimRight(strings.TrimSpace(opts.BaseURL), "/"),
-		apiKey:            strings.TrimSpace(opts.ApiKey),
-		systemPrompt:      opts.SystemPrompt,
-		messages:          make([]llmMemoryMessage, 0),
-		maxMemoryMessages: defaultMaxMemoryMessages,
-		interruptCh:       make(chan struct{}, 1),
-		client:            &http.Client{Timeout: 60 * time.Second},
+		ctx:          ctx,
+		baseURL:      strings.TrimRight(strings.TrimSpace(opts.BaseURL), "/"),
+		apiKey:       strings.TrimSpace(opts.ApiKey),
+		systemPrompt: opts.SystemPrompt,
+		mem:          newAsyncTurnMemory(ctx, log),
+		interruptCh:  make(chan struct{}, 1),
+		client:       &http.Client{Timeout: 60 * time.Second},
 	}, nil
 }
 
@@ -79,8 +81,8 @@ func (h *AnthropicHandler) QueryWithOptions(text string, options *QueryOptions) 
 		"temperature": options.Temperature,
 		"messages":    userMsgs,
 	}
-	if strings.TrimSpace(h.systemPrompt) != "" {
-		reqBody["system"] = h.systemPrompt
+	if sys := h.mem.mergedSystemPrompt(h.systemPrompt); strings.TrimSpace(sys) != "" {
+		reqBody["system"] = sys
 	}
 	raw, err := h.doAnthropic(reqCtx, reqBody)
 	if err != nil {
@@ -111,7 +113,7 @@ func (h *AnthropicHandler) QueryWithOptions(text string, options *QueryOptions) 
 	if reason == "" {
 		reason = "stop"
 	}
-	h.appendTurn(text, answer)
+	h.mem.appendPairAndMaybeSummarize(reqCtx, model, text, answer, h.summarizeConversationAnthropic)
 	return &QueryResponse{
 		Provider: h.Provider(),
 		Model:    model,
@@ -149,8 +151,8 @@ func (h *AnthropicHandler) QueryStream(text string, options *QueryOptions, callb
 		"messages":    h.buildAnthropicMessages(text),
 		"stream":      true,
 	}
-	if strings.TrimSpace(h.systemPrompt) != "" {
-		reqBody["system"] = h.systemPrompt
+	if sys := h.mem.mergedSystemPrompt(h.systemPrompt); strings.TrimSpace(sys) != "" {
+		reqBody["system"] = sys
 	}
 	b, _ := json.Marshal(reqBody)
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, h.baseURL+"/messages", bytes.NewReader(b))
@@ -210,7 +212,7 @@ func (h *AnthropicHandler) QueryStream(text string, options *QueryOptions, callb
 		}
 	}
 	answer := strings.TrimSpace(out.String())
-	h.appendTurn(text, answer)
+	h.mem.appendPairAndMaybeSummarize(reqCtx, model, text, answer, h.summarizeConversationAnthropic)
 	return &QueryResponse{
 		Provider: h.Provider(),
 		Model:    model,
@@ -228,45 +230,38 @@ func (h *AnthropicHandler) Interrupt() {
 }
 
 func (h *AnthropicHandler) ResetMemory() {
-	h.mutex.Lock()
-	h.messages = h.messages[:0]
-	h.mutex.Unlock()
+	if h.mem != nil {
+		h.mem.reset()
+	}
 }
 
 func (h *AnthropicHandler) SummarizeMemory(model string) (string, error) {
-	_ = model
-	h.mutex.Lock()
-	defer h.mutex.Unlock()
-	var b strings.Builder
-	for _, m := range h.messages {
-		b.WriteString(m.Role + ": " + m.Content + "\n")
+	if h.mem == nil {
+		return "", nil
 	}
-	return strings.TrimSpace(b.String()), nil
+	if strings.TrimSpace(model) == "" {
+		model = "claude-3-5-sonnet-20241022"
+	}
+	return h.mem.summarizeMemorySync(h.ctx, model, h.summarizeConversationAnthropic)
 }
 
 func (h *AnthropicHandler) SetMaxMemoryMessages(n int) {
-	if n <= 0 {
-		n = defaultMaxMemoryMessages
+	if h.mem != nil {
+		h.mem.setMaxMemoryMessages(n)
 	}
-	h.mutex.Lock()
-	h.maxMemoryMessages = n
-	if len(h.messages) > n {
-		h.messages = h.messages[len(h.messages)-n:]
-	}
-	h.mutex.Unlock()
 }
 
 func (h *AnthropicHandler) GetMaxMemoryMessages() int {
-	h.mutex.Lock()
-	defer h.mutex.Unlock()
-	return h.maxMemoryMessages
+	if h.mem == nil {
+		return defaultMaxMemoryMessages
+	}
+	return h.mem.getMaxMemoryMessages()
 }
 
 func (h *AnthropicHandler) buildAnthropicMessages(userText string) []map[string]any {
-	h.mutex.Lock()
-	defer h.mutex.Unlock()
-	msgs := make([]map[string]any, 0, len(h.messages)+1)
-	for _, m := range h.messages {
+	turns := h.mem.snapshotTurns()
+	msgs := make([]map[string]any, 0, len(turns)+1)
+	for _, m := range turns {
 		role := "user"
 		if m.Role == "assistant" {
 			role = "assistant"
@@ -287,13 +282,47 @@ func (h *AnthropicHandler) buildAnthropicMessages(userText string) []map[string]
 	return msgs
 }
 
-func (h *AnthropicHandler) appendTurn(userText, assistantText string) {
-	h.mutex.Lock()
-	defer h.mutex.Unlock()
-	h.messages = append(h.messages, llmMemoryMessage{Role: "user", Content: userText}, llmMemoryMessage{Role: "assistant", Content: assistantText})
-	if len(h.messages) > h.maxMemoryMessages {
-		h.messages = h.messages[len(h.messages)-h.maxMemoryMessages:]
+func (h *AnthropicHandler) summarizeConversationAnthropic(ctx context.Context, model string, transcript string, previousSummary string) (string, error) {
+	sys := "You are a conversation summarizer. Produce a concise, factual summary of the conversation so far. Preserve user preferences, facts, decisions, and open TODOs. Do not include any markdown."
+	user := ""
+	if strings.TrimSpace(previousSummary) != "" {
+		user += "Existing summary:\n" + previousSummary + "\n\n"
 	}
+	user += "Conversation transcript:\n" + transcript + "\n\nReturn an updated summary in plain text."
+	body := map[string]any{
+		"model":       model,
+		"max_tokens":  512,
+		"temperature": 0,
+		"system":      sys,
+		"messages": []map[string]any{
+			{
+				"role": "user",
+				"content": []map[string]string{
+					{"type": "text", "text": user},
+				},
+			},
+		},
+	}
+	raw, err := h.doAnthropic(ctx, body)
+	if err != nil {
+		return "", err
+	}
+	var parsed struct {
+		Content []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	for _, c := range parsed.Content {
+		if c.Type == "text" {
+			b.WriteString(c.Text)
+		}
+	}
+	return strings.TrimSpace(b.String()), nil
 }
 
 func (h *AnthropicHandler) doAnthropic(ctx context.Context, body map[string]any) ([]byte, error) {

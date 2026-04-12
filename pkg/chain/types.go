@@ -15,6 +15,10 @@ var (
 
 type State struct {
 	Query      string
+	// SelfQueryText is the retrieval-oriented query produced by pkg/selfquery (optional).
+	SelfQueryText    string
+	SelfQueryFilters map[string]any
+
 	Rewritten  string
 	Expanded   string
 	ExpandTerms []string
